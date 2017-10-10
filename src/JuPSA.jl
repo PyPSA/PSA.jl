@@ -212,18 +212,18 @@ function calculate_dependent_values(network)
     for (col, default) in defaults
         set_default(network.generators, col, default)
     end
-    defaults = [(:p_nom_extendable, false), (:s_nom_min, NaN),(:s_nom_max, NaN),
-                (:p_nom_min, 0), (:p_nom_max, Inf)]
+    defaults = [(:s_nom_extendable, false), (:s_nom_min, NaN),(:s_nom_max, NaN),
+                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0)]
     for (col, default) in defaults
         set_default(network.lines, col, default)
     end
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
-                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf)]
+                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0)]
     for (col, default) in defaults
         set_default(network.links, col, default)
     end
         defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
-                    (:p_max_pu, 1)]
+                    (:p_max_pu, 1), (:marginal_cost, 0)]
         for (col, default) in defaults
             set_default(network.storage_units, col, default)
     end
@@ -502,7 +502,15 @@ function lopf(network)
 
 
 # 7. set objective function
-    @objective(m, Min, sum(dot(generators[:marginal_cost], gn[:,t]) for t=1:T))
+    @objective(m, Min, sum(dot(generators[:marginal_cost], gn[:,t]) for t=1:T)
+                        + dot(generators_ext[:capital_cost], gen_p_nom[:])
+
+                        + dot(lines_ext[:capital_cost], ln_s_nom[:])
+                        + dot(links_ext[:capital_cost], lk_p_nom[:])
+
+                        + sum(dot(storage_units[:marginal_cost], su_dispatch[:,t]) for t=1:T)
+                        + dot(storage_units_ext[:capital_cost], su_p_nom[:])
+                        )
 
     status = solve(m)
 

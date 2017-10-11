@@ -7,7 +7,7 @@ const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
 
-export Network, lopf, import_network, idx, rev_idx, index_name, index_by, idx_by, to_symbol, append_idx_col
+export Network, lopf, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
 
 mutable struct Network
@@ -28,34 +28,35 @@ mutable struct Network
 end
 
 
+
 function Network(
-    buses=DataFrame(repeat([Int64[]], outer=13),
+    buses=DataFrame(repeat([Bool[]], outer=13),
 [:name, :area, :area_offshore, :carrier, :control,
 :country, :type, :v_nom, :v_mag_pu_set, :v_mag_pu_min,
 :v_mag_pu_max, :x, :y]),
 
-    generators=DataFrame(repeat([Int64[]], outer=27),
+    generators=DataFrame(repeat([Bool[]], outer=27),
         [:bus, :control, :type, :p_nom, :p_nom_extendable,
         :p_nom_min, :p_nom_max, :p_min_pu, :p_max_pu, :p_set, :q_set, :sign,
         :carrier, :marginal_cost, :capital_cost, :efficiency, :committable,
         :start_up_cost, :shut_down_cost, :min_up_time, :min_down_time,
         :initial_status, :ramp_limit_up, :ramp_limit_down, :ramp_limit_start_up,
         :ramp_limit_shut_down, :p_nom_opt]),
-    loads=DataFrame(repeat([Int64[]], outer=5),
+    loads=DataFrame(repeat([Bool[]], outer=5),
         [:bus, :type, :p_set, :q_set, :sign]),
-    lines=DataFrame(repeat([Int64[]], outer=23),
+    lines=DataFrame(repeat([Bool[]], outer=23),
         [:bus0, :bus1, :type, :x, :r, :g, :b, :s_nom, :s_nom_extendable,
         :s_nom_min, :s_nom_max, :capital_cost, :length, :terrain_factor,
         :num_parallel, :v_ang_min, :v_ang_max, :sub_network, :x_pu,
         :r_pu, :g_pu, :b_pu, :s_nom_opt]) ,
 
-    links=DataFrame(repeat([Int64[]], outer=16),
+    links=DataFrame(repeat([Bool[]], outer=16),
         [:bus0, :bus1, :type, :efficiency, :p_nom,
         :p_nom_extendable, :p_nom_min, :p_nom_max, :p_set, :p_min_pu,
         :p_max_pu, :capital_cost, :marginal_cost, :length, :terrain_factor,
         :p_nom_opt]),
 
-    storage_units=DataFrame(repeat([Int64[]], outer=24),
+    storage_units=DataFrame(repeat([Bool[]], outer=24),
         [:bus, :control, :type, :p_nom, :p_nom_extendable,
         :p_nom_min, :p_nom_max, :p_min_pu, :p_max_pu, :p_set,
         :q_set, :sign, :carrier, :marginal_cost, :capital_cost,
@@ -63,7 +64,7 @@ function Network(
         :cyclic_state_of_charge, :max_hours, :efficiency_store,
         :efficiency_dispatch, :standing_loss, :inflow, :p_nom_opt]),
 
-    transformers=DataFrame(repeat([Int64[]], outer=26),
+    transformers=DataFrame(repeat([Bool[]], outer=26),
         [:bus0, :bus1, :type, :model, :x, :r, :g, :b, :s_nom,
         :s_nom_extendable, :s_nom_min, :s_nom_max, :capital_cost,
         :num_parallel, :tap_ratio, :tap_side, :tap_position,
@@ -140,18 +141,22 @@ end
 
 
 
-# function set_snapshots(n::Network, Index)
-#     for timedependent in [n.buses_t, n.lines_t, n.generators_t]
-#         timedependent = loc(timedependent)[Index]
-#     end
-# end
+function set_snapshots(network, snapshots)
+    for field=[field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+        for df_name=keys(getfield(network,field))
+            if nrow(getfield(network,field)[df_name])>0
+                getfield(network,field)[df_name] = getfield(network,field)[df_name][snapshots, :]
+            end
+        end
+    end
+end
 
 # auxilliary functions
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
-index_name(dataframe, names) = dataframe[findin(dataframe[:name], names),:]
-index_by(dataframe, col, values) = dataframe[findin(dataframe[col], values),:]
-idx_by(dataframe, col, values) = index_by(dataframe, col, values)[:idx]
+select_names(dataframe, names) = dataframe[findin(dataframe[:name], names),:]
+select_by(dataframe, col, values) = dataframe[findin(dataframe[col], values),:]
+idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
 function to_symbol(str)
     if typeof(str)==String
         return Symbol(replace(str, " ", "_"))
@@ -172,7 +177,7 @@ function to_string(sym)
     end
 end
 
-function append_idx_col(dataframe)
+function append_idx_col!(dataframe)
     if typeof(dataframe)==Vector{DataFrames.DataFrame}
         for df in dataframe
             df[:idx] = 1:nrow(df)
@@ -184,18 +189,25 @@ end
 
 function get_switchable_as_dense(network, component, attribute, snapshots=0)
     if snapshots==0
-        snanpshots = nrow(network.loads_t["p"]) # network.snapshots
+        snapshots = network.loads_t["p"][:name] # network.snapshots
     end
-    component = to_symbol(component)
+    T = length(snapshots)
     component_t = to_symbol(component * "_t")
-    attribute = to_symbol(attribute)
+    component = to_symbol(component)
     dense = DataFrame()
     if in(attribute, keys(getfield(network, component_t)))
-        dense = getfield(getfield(network, component_t), attribute)
+        dense = getfield(network, component_t)[attribute]
     end
-    if nrow(dense)==0
-        dense = repmat(transpose(getfield(getfield(network, component), attribute)), T)
+    cols = to_symbol(collect(getfield(network, component)[:name]))
+    not_included = [to_string(c) for c=cols if !in(c,names(dense))]
+    if length(not_included)>0
+        attribute = to_symbol(attribute)
+        df = select_names(getfield(network, component), not_included)
+        df = names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
+                to_symbol(not_included))
+        dense = [dense df]
     end
+    return dense[cols]
 end
 
 
@@ -208,11 +220,12 @@ function calculate_dependent_values(network)
         end
     end
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
-                (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0)]
+                (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
+                (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true)]
     for (col, default) in defaults
         set_default(network.generators, col, default)
     end
-    defaults = [(:s_nom_extendable, false), (:s_nom_min, NaN),(:s_nom_max, NaN),
+    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf),
                 (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0)]
     for (col, default) in defaults
         set_default(network.lines, col, default)
@@ -244,18 +257,12 @@ function lopf(network)
 
 # 1. add all generators to the model
     # 1.1 set different generator types
-    if length(eachrow(network.generators))>0
-        generators_fix = network.generators[(!network.generators[:p_nom_extendable]) .&
-                                        (!network.generators[:commitable]),:]
-        generators_ext = network.generators[network.generators[:p_nom_extendable],:]
-        generators_com = network.generators[network.generators[:commitable],:]
-        generators = [generators_fix; generators_ext; generators_com]
-    else
-        for df in [generators_fix, generators_ext, generators_com, generators]
-            df = network.generators
-        end
-    end
-    append_idx_col([generators_fix, generators_ext, generators_com, generators])
+    generators_fix = network.generators[(!network.generators[:p_nom_extendable]) .&
+                                    (!network.generators[:commitable]),:]
+    generators_ext = network.generators[network.generators[:p_nom_extendable],:]
+    generators_com = network.generators[network.generators[:commitable],:]
+    generators = [generators_fix; generators_ext; generators_com]
+    append_idx_col!([generators_fix, generators_ext, generators_com, generators])
 
     # 1.2 fix bounds for iterating
     G_fix = nrow(generators_fix)
@@ -309,14 +316,10 @@ function lopf(network)
 
 # 2. add all lines to the model
     # 2.1 set different lines types
-    if length(eachrow(network.lines))>0
-        lines_fix = network.lines[!network.lines[:p_nom_extendable],:]
-        lines_ext = network.lines[network.lines[:p_nom_extendable],:]
-        lines = [lines_fix; lines_ext]
-    else
-        lines_fix = network.lines; lines_ext = network.lines; lines = network.lines
-    end
-    append_idx_col([lines_fix, lines_ext, lines])
+    lines_fix = network.lines[!network.lines[:s_nom_extendable],:]
+    lines_ext = network.lines[network.lines[:s_nom_extendable],:]
+    lines = [lines_fix; lines_ext]
+    append_idx_col!([lines_fix, lines_ext, lines])
 
     # 2.2 iterator bounds
     LN_fix = nrow(lines_fix)
@@ -340,14 +343,10 @@ function lopf(network)
 
 # 3. add all links to the model
     # 3.1 set different link types
-    if length(eachrow(network.links))>0
-        links_fix = network.links[!network.links[:p_nom_extendable],:]
-        links_ext = network.links[network.links[:p_nom_extendable],:]
-        links = [links_fix; links_ext]
-    else
-        links_fix = network.links; links_ext = network.links; links = network.links
-    end
-    append_idx_col([links_fix, links_ext, links])
+    links_fix = network.links[!network.links[:p_nom_extendable],:]
+    links_ext = network.links[network.links[:p_nom_extendable],:]
+    links = [links_fix; links_ext]
+    append_idx_col!([links_fix, links_ext, links])
 
     # 3.2 iterator bounds
     LK_fix = nrow(links_fix)
@@ -371,18 +370,11 @@ function lopf(network)
 
 # 4. define storage_units
     # 4.1 set different storage_units types
-    if length(eachrow(network.storage_units))>0
-        storage_units_fix = network.storage_units[!network.storage_units[:p_nom_extendable],:]
-        storage_units_ext = network.storage_units[network.storage_units[:p_nom_extendable],:]
+    storage_units_fix = network.storage_units[.!network.storage_units[:p_nom_extendable],:]
+    storage_units_ext = network.storage_units[network.storage_units[:p_nom_extendable],:]
         # storage_units_spill = network.storage_units[inflow.max()>0,:]
-        storage_units = [storage_units_fix; storage_units_ext]
-    else
-        storage_units_fix = network.storage_units
-        storage_units_ext = network.storage_units
-        # storage_units_spill = network.storage_units
-        storage_units = network.storage_units
-    end
-    append_idx_col([storage_units_fix, storage_units_ext, # storage_units_spill,
+    storage_units = [storage_units_fix; storage_units_ext]
+    append_idx_col!([storage_units_fix, storage_units_ext, # storage_units_spill,
                     storage_units])
 
     # 4.2 iterator bounds
@@ -415,7 +407,7 @@ function lopf(network)
 
     # 4.4 set constraints for extendable storage_units
     is_cyclic_i = storage_units[storage_units[:cyclic_state_of_charge], :idx]
-    not_cyclic_i = storage_units[!storage_units[:cyclic_state_of_charge], :idx]
+    not_cyclic_i = storage_units[.!storage_units[:cyclic_state_of_charge], :idx]
 
     @constraints(m, begin
             [s=1:SU_ext,t=1:T], su_dispatch_ext[s,t] <= su_p_nom[s].*storage_units_ext[s, :p_max_pu]
@@ -445,7 +437,6 @@ function lopf(network)
 
           == 0 ))
 
-
 # 6. set Kirchhoff Voltage Law constraint
 # since cyclebasis is not yet supported in LightGraphs, use the pyimported
 # netwrokx in order to define all cycles. The cycle_basis returns a list of
@@ -465,7 +456,7 @@ function lopf(network)
     if ndims(cycles)<2
         cycles = [cycle for cycle in cycles if length(cycle)>2]
     else
-        cycles = [cycles]
+        cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
     end
     if length(cycles)>0
         cycles_branch = Array{Int64,1}[]
@@ -513,18 +504,26 @@ function lopf(network)
                         )
 
     status = solve(m)
-
 # 8. extract optimisation results
     if status==:Optimal
+        network.generators[:p_nom] = DataArray{Float64}(network.generators[:p_nom])
+        network.generators[network.generators[:p_nom_extendable],:p_nom] = getvalue(gen_p_nom)
         network.generators_t["p"] = names!(DataFrame(transpose(getvalue(gn))),
                             [to_symbol(n) for n=generators[:name]])
+
+        network.lines[:s_nom] = DataArray{Float64}(network.lines[:s_nom])
+        network.lines[network.lines[:s_nom_extendable],:s_nom] = getvalue(ln_s_nom)
         network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(ln))),
                             [to_symbol(n) for n=lines[:name]])
         if length(eachrow(links))>0
+            network.links[:p_nom] = DataArray{Float64}(network.links[:p_nom])
+            network.links[network.links[:p_nom_extendable],:p_nom] = getvalue(lk_p_nom)
             network.links_t["p0"] = names!(DataFrame(transpose(getvalue(lk))),
                                 [to_symbol(n) for n=links[:name]])
         end
         if length(eachrow(storage_units))>0
+            network.storage_units[:p_nom] = DataArray{Float64}(network.storage_units[:p_nom])
+            network.storage_units[network.storage_units[:p_nom_extendable],:p_nom] = getvalue(su_p_nom)
             network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(su_dispatch .- su_store))),
                                 [to_symbol(n) for n=storage_units[:name]])
         end

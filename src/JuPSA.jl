@@ -25,6 +25,7 @@ mutable struct Network
     links_t::Dict{String,DataFrame}
     storage_units_t::Dict{String,DataFrame}
     transformers_t::Dict{String,DataFrame}
+    snapshots::DataFrame
 end
 
 
@@ -73,7 +74,7 @@ function Network(
 
     buses_t=Dict([("marginal_price",DataFrame()), ("v_ang", DataFrame()),
             ("v_mag_pu_set",DataFrame()), ("q", DataFrame()),
-            ("v_mag_pu", DataFrame()), ("p", DataFrame())]),
+            ("v_mag_pu", DataFrame()), ("p", DataFrame()), ("p_max_pu", DataFrame())]),
     generators_t=Dict{String,DataFrame}(
             [("marginal_price",DataFrame()), ("v_ang", DataFrame()),
             ("v_mag_pu_set",DataFrame()), ("q", DataFrame()),
@@ -92,56 +93,66 @@ function Network(
         ("efficiency",DataFrame()), ("p_set", DataFrame())]),
     transformers_t=Dict{String,DataFrame}([("p0",DataFrame()), ("p1", DataFrame()),
             ("q0", DataFrame()), ("q1", DataFrame()),
-            ("mu_upper",DataFrame())])
+            ("mu_upper",DataFrame())]),
+    snapshots=DataFrame(Bool[])
     )
     Network(
         buses, generators, loads, lines, links, transformers, buses_t,
         generators_t, loads_t, lines_t, links_t, storage_unists_t, transformers_t)
 end
 
-function import_network(file="")
-    n = Network()
-    if file!=""
-        if ispath("$file/buses.csv")
-            n.buses = readtable("$file/buses.csv", truestrings=["True"],
-                                            falsestrings=["False"])
-        end
-        if ispath("$file/lines.csv")
-            n.lines = readtable("$file/lines.csv", truestrings=["True"],
-                                            falsestrings=["False"])
-        end
-        if ispath("$file/links.csv")
-            n.links = readtable("$file/links.csv", truestrings=["True"],
-                                            falsestrings=["False"])
-        end
-        if ispath("$file/generators.csv")
-            n.generators = readtable("$file/generators.csv", truestrings=["True"],
-                                            falsestrings=["False"])
-        end
-        if ispath("$file/loads.csv")
-            n.loads = readtable("$file/loads.csv", truestrings=["True"],
-                                            falsestrings=["False"])
-        end
-        if ispath("$file/storage_units.csv")
-            n.storage_units = readtable("$file/storage_units.csv", truestrings=["True"],
-                                            falsestrings=["False"])
-        end
-        if ispath("$file/loads-p_set.csv")
-            n.loads_t["p"] = readtable("$file/loads-p_set.csv")
-        end
-        if ispath("$file/generators-p_max_pu.csv")
-            n.generators_t["p_max_pu"] = readtable("$file/generators-p_max_pu.csv")
-        end
-        if ispath("$file/storage_units-inflow.csv")
-            n.storage_units_t["inflow"] = readtable("$file/storage_units-inflow.csv")
+
+function import_network(folder)
+    network = JuPSA.Network()
+    !ispath("$folder") ? error("Path not existent") : nothing
+    components = [component for component=fieldnames(network) if String(component)[end-1:end]!="_t"]
+    for component=components
+        if ispath("$folder/$component.csv")
+            setfield!(network,component,readtable("$folder/$component.csv", truestrings=["True"],
+                                            falsestrings=["False"]))
+        else
+            print("$folder/$component.csv" * " not found")
         end
     end
-    return n
+    components_t = [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    for component_t=components_t
+        for attr in keys(getfield(network, component_t))
+            component = Symbol(String(component_t)[1:end-2])
+            ispath("$folder/$component-$attr.csv") ? getfield(network,component_t)[attr]= (
+                readtable("$folder/$component-$attr.csv", truestrings=["True"], falsestrings=["False"]) ): nothing
+        end
+    end
+    return network
+end
+
+
+function export_network(network, folder)
+    !ispath(folder) ? mkdir(folder) : nothing
+    components_t = [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    for field_t in components_t
+        for df_name=keys(getfield(network,field_t))
+            @show field_t, df_name
+            if nrow(getfield(network,field_t)[df_name])>0
+                field = Symbol(String(field_t)[1:end-2])
+                writetable("$folder/$field-$df_name.csv", getfield(network,field_t)[df_name])
+            end
+        end
+    end
+    components = [field for field=fieldnames(network) if String(field)[end-1:end]!="_t"]
+    for field in components
+        writetable("$folder/$field.csv", getfield(network, field))
+    end
 end
 
 
 
-function set_snapshots(network, snapshots)
+
+
+function time_dependent_components(network)
+    return [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+end
+
+function set_snapshots!(network, snapshots)
     for field=[field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
         for df_name=keys(getfield(network,field))
             if nrow(getfield(network,field)[df_name])>0
@@ -172,8 +183,8 @@ end
 function to_string(sym)
     if typeof(sym)==Symbol
         return replace(String(sym), "_", " ")
-    # else
-    #     return sym
+    elseif typeof(sym)==Vector{Symbol}
+        return [replace(String(x), "_", " ") for x in sym]
     end
 end
 
@@ -188,9 +199,7 @@ function append_idx_col!(dataframe)
 end
 
 function get_switchable_as_dense(network, component, attribute, snapshots=0)
-    if snapshots==0
-        snapshots = network.loads_t["p"][:name] # network.snapshots
-    end
+    snapshots==0 ? snapshots = network.loads_t["p"][:name] : nothing
     T = length(snapshots)
     component_t = to_symbol(component * "_t")
     component = to_symbol(component)
@@ -215,9 +224,7 @@ end
 
 function calculate_dependent_values(network)
     function set_default(dataframe, col, default)
-        if !in(col, names(dataframe))
-            dataframe[col] = default
-        end
+        !in(col, names(dataframe)) ? dataframe[col] = default : nothing
     end
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
                 (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
@@ -236,7 +243,8 @@ function calculate_dependent_values(network)
         set_default(network.links, col, default)
     end
         defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
-                    (:p_max_pu, 1), (:marginal_cost, 0)]
+                    (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
+                    (:efficiency_dispatch, 1)]
         for (col, default) in defaults
             set_default(network.storage_units, col, default)
     end
@@ -269,18 +277,21 @@ function lopf(network)
     G_ext = nrow(generators_ext)
     G_com = nrow(generators_com)
 
+    p_max_pu = get_switchable_as_dense(network, "generators", "p_max_pu")
+    p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
+
    # 1.3 add generator variables to the model
     @variables m begin
 
-        (generators_fix[gr, :p_nom].*generators_fix[gr, :p_min_pu] <= g_fix[gr=1:G_fix,t=1:T]
-                                <= generators_fix[gr, :p_nom].*generators_fix[gr, :p_max_pu])
+        (generators_fix[gr, :p_nom]*p_min_pu[:,generators_fix[:idx]][t,gr] <= g_fix[gr=1:G_fix,t=1:T]
+                                <= generators_fix[gr, :p_nom]*p_max_pu[:,generators_fix[:idx]][t,gr])
 
         g_ext[gr=1:G_ext,t=1:T]
         generators_ext[gr, :p_nom_min] <=  gen_p_nom[gr=1:G_ext] <= generators_ext[gr, :p_nom_max]
 
         g_status[gr=1:G_com,t=1:T], Bin
-        (generators_com[gr, :p_nom].*generators_com[gr, :p_min_pu] <= g_com[gr=1:G_com,t=1:T]
-                                <= generators_com[gr, :p_nom].*generators_com[gr, :p_max_pu])
+        (generators_com[gr, :p_nom].*p_min_pu[:,generators_com[:idx]][t,gr] <= g_com[gr=1:G_com,t=1:T]
+                                <= generators_com[gr, :p_nom]*p_max_pu[:,generators_com[:idx]][t,gr])
     end
 
     gn = [g_fix; g_ext; g_com] # gn is the concatenated variable array
@@ -291,8 +302,8 @@ function lopf(network)
     g_down_time_i = generators_com[generators_com[:min_down_time].>0, :idx]
 
     @constraints(m, begin
-        [gr=1:G_ext,t=1:T], g_ext[gr,t] >= gen_p_nom[gr].*generators_ext[gr, :p_min_pu]
-        [gr=1:G_ext,t=1:T], g_ext[gr,t] <= gen_p_nom[gr].*generators_ext[gr, :p_max_pu]
+        [gr=1:G_ext,t=1:T], g_ext[gr,t] >= gen_p_nom[gr]*p_min_pu[:,generators_ext[:idx]][t,gr]
+        [gr=1:G_ext,t=1:T], g_ext[gr,t] <= gen_p_nom[gr]*p_max_pu[:,generators_ext[:idx]][t,gr]
 
         [gr=1:G_com,t=1:T], g_com[gr,t] - g_com[gr,t].*g_status[gr,t] == 0
 
@@ -414,10 +425,17 @@ function lopf(network)
             [s=1:SU_ext,t=1:T], su_store_ext[s,t] <= - su_p_nom[s].*storage_units_ext[s, :p_min_pu]
             [s=1:SU_ext,t=1:T], su_soc_ext[s,t] <= su_p_nom[s].*storage_units_ext[s, :max_hours]
 
-            [s=is_cyclic_i,t=1], su_soc[s,t] == su_soc[s,T] + su_store[s,t] - su_dispatch[s,t]
-            [s=not_cyclic_i,t=1], su_soc[s,t] == storage_units[s,:state_of_charge_initial] + su_store[s,t] - su_dispatch[s,t]
+            [s=is_cyclic_i,t=1], su_soc[s,t] == (su_soc[s,T]
+                                        + storage_units[s,:efficiency_store] * su_store[s,t]
+                                        - storage_units[s,:efficiency_dispatch] * su_dispatch[s,t])
+            [s=not_cyclic_i,t=1], su_soc[s,t] == (storage_units[s,:state_of_charge_initial]
+                                        + storage_units[s,:efficiency_store] * su_store[s,t]
+                                        - storage_units[s,:efficiency_dispatch] * su_dispatch[s,t])
 
-            [s=is_cyclic_i,t=2:T], su_soc[s,t] == su_soc[s,t-1] + su_store[s,t] - su_dispatch[s,t]
+            [s=is_cyclic_i,t=2:T], su_soc[s,t] == (su_soc[s,t-1]
+                                            + storage_units[s,:efficiency_store] * su_store[s,t]
+                                            - storage_units[s,:efficiency_dispatch] * su_dispatch[s,t])
+
         end)
 
 
@@ -484,15 +502,20 @@ function lopf(network)
         end
         if attribute==:x
             @constraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
-                    dot(directions[c] .* lines[cycles_branch[c], :x]/380., ln[cycles_branch[c],t]) == 0)
+                    dot(directions[c] .* lines[cycles_branch[c], :x]/380.,
+                        ln[cycles_branch[c],t]) == 0)
         # elseif attribute==:r
         #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
         #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , lk[cycles_branch[c],t]) == 0)
         end
     end
 
+# 7. set global_constraints
 
-# 7. set objective function
+#
+#
+
+# 8. set objective function
     @objective(m, Min, sum(dot(generators[:marginal_cost], gn[:,t]) for t=1:T)
                         + dot(generators_ext[:capital_cost], gen_p_nom[:])
 
@@ -504,7 +527,7 @@ function lopf(network)
                         )
 
     status = solve(m)
-# 8. extract optimisation results
+# 9. extract optimisation results
     if status==:Optimal
         network.generators[:p_nom] = DataArray{Float64}(network.generators[:p_nom])
         network.generators[network.generators[:p_nom_extendable],:p_nom] = getvalue(gen_p_nom)
@@ -528,7 +551,7 @@ function lopf(network)
                                 [to_symbol(n) for n=storage_units[:name]])
         end
     end
-
+    return m
 end
 
 end

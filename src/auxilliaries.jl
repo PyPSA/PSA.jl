@@ -5,7 +5,7 @@ function time_dependent_components(network)
 end
 
 function set_snapshots!(network, snapshots)
-    for field=[field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    for field=time_dependent_components(network)
         for df_name=keys(getfield(network,field))
             if nrow(getfield(network,field)[df_name])>0
                 getfield(network,field)[df_name] = getfield(network,field)[df_name][snapshots, :]
@@ -21,10 +21,11 @@ rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 select_names(dataframe, names) = dataframe[findin(dataframe[:name], names),:]
 select_by(dataframe, col, values) = dataframe[findin(dataframe[col], values),:]
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
+
 function to_symbol(str)
     if typeof(str)==String
         return Symbol(replace(str, " ", "_"))
-    elseif typeof(str)==Vector{String}
+    elseif (typeof(str)==Vector{String} || typeof(str) == DataArrays.DataArray{String,1})
         return [Symbol(replace(x, " ", "_")) for x in str]
     elseif typeof(str)==Int
         return Symbol("$str")
@@ -36,7 +37,7 @@ end
 function to_string(sym)
     if typeof(sym)==Symbol
         return replace(String(sym), "_", " ")
-    elseif typeof(sym)==Vector{Symbol}
+    elseif (typeof(sym)==Vector{Symbol} || typeof(sym) == DataArrays.DataArray{String,1})
         return [replace(String(x), "_", " ") for x in sym]
     end
 end
@@ -73,7 +74,7 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
 end
 
 
-function calculate_dependent_values(network)
+function calculate_dependent_values!(network)
     function set_default(dataframe, col, default)
         !in(col, names(dataframe)) ? dataframe[col] = default : nothing
     end
@@ -100,4 +101,12 @@ function calculate_dependent_values(network)
         for (col, default) in defaults
             set_default(network.storage_units, col, default)
     end
+    for df_name=keys(network.loads_t)
+        if nrow(network.loads_t[df_name])>1
+            for bus=[bus for bus in network.buses[:name] if 
+                !in(to_symbol(bus), names(network.loads_t[df_name]))]
+                
+            end
+        end
+    end 
 end

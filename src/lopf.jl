@@ -1,8 +1,5 @@
 using Gurobi, JuMP
 # using Ipopt
-using PyCall
-const networkx = PyNULL()
-copy!(networkx, pyimport("networkx" ))
 
 
 include("auxilliaries.jl")
@@ -24,10 +21,13 @@ function lopf(network; solver_options...)
 
 # 1. add all generators to the model
     # 1.1 set different generator types
-    fix_gens_b = ((!network.generators[:p_nom_extendable]) .& (!network.generators[:commitable]))
+    fix_gens_b = ((.!network.generators[:p_nom_extendable]) .& (.!network.generators[:commitable]))
     ext_gens_b = network.generators[:p_nom_extendable]
     com_gens_b = network.generators[:commitable]
-    generators = vcat([network.generators[ttype,:] for ttype=[fix_gens_b, ext_gens_b, com_gens_b]])
+    # TODO! vcat does not concat an Array of DataFrames
+
+    generators = vcat([network.generators[gens_b,:] for gens_b in [fix_gens_b, ext_gens_b, com_gens_b]
+                        if sum(gens_b)>0]...)
     append_idx_col!(generators)
 
     # 1.2 fix bounds for iterating
@@ -85,8 +85,8 @@ function lopf(network; solver_options...)
 
 # 2. add all lines to the model
     # 2.1 set different lines types
-    lines_fix = network.lines[!network.lines[:s_nom_extendable],:]
-    lines_ext = network.lines[network.lines[:s_nom_extendable],:]
+    lines_fix = network.lines[.!network.lines[:s_nom_extendable],:]
+    lines_ext = network.lines[.!.!network.lines[:s_nom_extendable],:]
     lines = [lines_fix; lines_ext]
     append_idx_col!([lines_fix, lines_ext, lines])
 
@@ -288,10 +288,7 @@ function lopf(network; solver_options...)
 
 
     (branches, var, attribute) = (lines, ln, :x)
-    g = networkx[:Graph]()
-    g[:add_nodes_from](busidx)
-    g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(branches)])
-    cycles = networkx[:cycle_basis](g)
+    cycles = get_cycles(network)
     if ndims(cycles)<2
         cycles = [cycle for cycle in cycles if length(cycle)>2]
     else

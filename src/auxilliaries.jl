@@ -1,3 +1,7 @@
+using LightGraphs
+using PyCall
+const networkx = PyNULL()
+copy!(networkx, pyimport("networkx" ))
 
 
 function time_dependent_components(network)
@@ -15,17 +19,38 @@ function set_snapshots!(network, snapshots)
     network.snapshots = network.snapshots[snapshots,:]
 end
 
+
+
+
 # auxilliary functions
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
-select_names(dataframe, names) = dataframe[findin(dataframe[:name], names),:]
-select_by(dataframe, col, values) = dataframe[findin(dataframe[col], values),:]
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
+function select_names(a, b)
+    mdict = idx(a)
+    ids = Array{Int,1}(0)
+    for i in b
+        push!(ids, mdict[i])
+    end
+    a[ids,:]
+end
+
+function select_by(dataframe, col, selector)
+    mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
+    ids = Array{Int,1}(0)
+    for i in selector
+        push!(ids, mdict[i])
+    end
+    dataframe[ids,:]
+end
+
 
 function to_symbol(str)
-    if typeof(str)==String
+    if typeof(str)==CategoricalArrays.CategoricalString{UInt32} || typeof(str) == String
         return Symbol(replace(str, " ", "_"))
-    elseif (typeof(str)==Vector{String} || typeof(str) == DataArrays.DataArray{String,1})
+    elseif (typeof(str)==Vector{String} || typeof(str) == CategoricalArrays.CategoricalArray{
+                                                String,1,UInt32,String,CategoricalArrays.
+                                                CategoricalString{UInt32},Union{}})
         return [Symbol(replace(x, " ", "_")) for x in str]
     elseif typeof(str)==Int
         return Symbol("$str")
@@ -37,7 +62,9 @@ end
 function to_string(sym)
     if typeof(sym)==Symbol
         return replace(String(sym), "_", " ")
-    elseif (typeof(sym)==Vector{Symbol} || typeof(sym) == DataArrays.DataArray{String,1})
+    elseif (typeof(sym)==Vector{Symbol} || typeof(sym) == CategoricalArrays.CategoricalArray{
+                                                String,1,UInt32,String,CategoricalArrays.
+                                                CategoricalString{UInt32},Union{}})
         return [replace(String(x), "_", " ") for x in sym]
     end
 end
@@ -61,12 +88,12 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
     if in(attribute, keys(getfield(network, component_t)))
         dense = getfield(network, component_t)[attribute]
     end
-    cols = to_symbol(collect(getfield(network, component)[:name]))
+    cols = to_symbol(getfield(network, component)[:name])
     not_included = [to_string(c) for c=cols if !in(c,names(dense))]
     if length(not_included)>0
         attribute = to_symbol(attribute)
         df = select_names(getfield(network, component), not_included)
-        df = names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
+        df = DataFrames.names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
                 to_symbol(not_included))
         dense = [dense df]
     end
@@ -85,11 +112,17 @@ function calculate_dependent_values!(network)
     for (col, default) in defaults
         set_default(network.generators, col, default)
     end
+    network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
     defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0)]
+                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
     for (col, default) in defaults
         set_default(network.lines, col, default)
     end
+    network.lines[:x_pu] = network.lines[:x]./(network.lines[:v_nom].^2)
+    network.lines[:r_pu] = network.lines[:r]./(network.lines[:v_nom].^2)
+    network.lines[:b_pu] = network.lines[:b].*network.lines[:v_nom].^2
+    network.lines[:g_pu] = network.lines[:g].*network.lines[:v_nom].^2
+
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
                 (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0)]
     for (col, default) in defaults
@@ -109,4 +142,51 @@ function calculate_dependent_values!(network)
             end
         end
     end 
+end
+
+function to_graph(network) 
+    busidx = idx(network.buses)
+    g = DiGraph(length(busidx))
+    for l in eachrow(network.lines)
+        add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
+    end 
+    return g
+end
+
+# function to_graphx(network) 
+#     busidx = idx(network.buses)
+#     g = networkx[:Graph]()
+#     g[:add_nodes_from](busidx)
+#     g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
+#     return g
+# end
+
+function incidence_matrix(network)
+    busidx = idx(network.buses)
+    lines = network.lines
+    K = zeros(nrow(network.buses),nrow(lines))
+    for l in 1:size(K)[2]
+        K[busidx[lines[l,:bus0]],l] = 1
+        K[busidx[lines[l,:bus1]],l] = -1
+    end
+    return K
+end
+
+function laplace_matrix(network)
+    K = incidence_matrix(network)
+    return K*K'
+end
+
+function ptdf_matrix(network)
+    K = incidence_matrix(network)
+    H = K' * pinv(K*K')
+    return H .- H[:,1]
+end
+
+function get_cycles(network) 
+    busidx = idx(network.buses)
+    g = networkx[:Graph]()
+    g[:add_nodes_from](busidx)
+    g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
+    networkx[:cycle_basis](g)
 end

@@ -1,10 +1,10 @@
 module JuPSA
 
-using DataFrames, LightGraphs
+using DataFrames, CSV, LightGraphs
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
-include("auxilliaries.jl")
+# include("auxilliaries.jl") already in lopf
 include("lopf.jl")
 
 mutable struct Network
@@ -105,7 +105,7 @@ function import_network(folder)
     components = [component for component=fieldnames(network) if String(component)[end-1:end]!="_t"]
     for component=components
         if ispath("$folder/$component.csv")
-            setfield!(network,component,readtable("$folder/$component.csv", truestrings=["True"],
+            setfield!(network,component,readtable("$folder/$component.csv"; truestrings=["True"],
                                             falsestrings=["False"]))
         end
     end
@@ -114,7 +114,7 @@ function import_network(folder)
         for attr in keys(getfield(network, component_t))
             component = Symbol(String(component_t)[1:end-2])
             ispath("$folder/$component-$attr.csv") ? getfield(network,component_t)[attr]= (
-                readtable("$folder/$component-$attr.csv", truestrings=["True"], falsestrings=["False"]) ): nothing
+                readtable("$folder/$component-$attr.csv"; truestrings=["True"], falsestrings=["False"]) ): nothing
         end
     end
     return network

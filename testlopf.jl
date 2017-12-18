@@ -1,16 +1,9 @@
-import JuPSA
-# reload("JuPSA")
+import PSA
+# reload("PSA")
 
-network = JuPSA.import_network("/home/fabian/vres/py/pypsa/examples/ac-dc-meshed/ac-dc-data/")
-for name = JuPSA.to_symbol(network.buses[:name])
-    if !in(name, names(network.loads_t["p"]))
-        network.loads_t["p"][name] = 0
-    end
-end
-
-network = JuPSA.import_network("/home/fabian/Desktop/PCA/intermediates/pre-lopf/pre6-37-solved-alpha_inhom-082")
-
+network = PSA.import_network("/home/fabian/Desktop/PCA/intermediates/03-clusters/pre6-37/")
 
 # network.loads_t["p"][:LT0_0] = 0
-# m = JuPSA.lopf(network; Crossover=0)
+PSA.set_snapshots!(network, 1:100)
+m = PSA.lopf(network; Crossover=1)
 # println(network.storage_units_t["p"])

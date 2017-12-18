@@ -1,4 +1,4 @@
-module JuPSA
+module PSA
 
 using DataFrames, CSV, LightGraphs
 
@@ -15,6 +15,8 @@ mutable struct Network
     links::DataFrame
     storage_units::DataFrame
     transformers::DataFrame
+    carriers::DataFrame
+    global_constraints::DataFrame
     buses_t::Dict{String,DataFrame}
     generators_t::Dict{String,DataFrame}
     loads_t::Dict{String,DataFrame}
@@ -69,6 +71,11 @@ function Network(
         :phase_shift, :v_ang_min, :v_ang_max, :sub_network,
         :x_pu, :r_pu, :g_pu, :b_pu, :s_nom_opt]),
 
+    carriers = DataFrame(),
+
+    global_constraints=DataFrame(Bool[]), 
+
+# time_dependent
     buses_t=Dict([("marginal_price",DataFrame()), ("v_ang", DataFrame()),
             ("v_mag_pu_set",DataFrame()), ("q", DataFrame()),
             ("v_mag_pu", DataFrame()), ("p", DataFrame()), ("p_max_pu", DataFrame())]),
@@ -92,15 +99,16 @@ function Network(
             ("q0", DataFrame()), ("q1", DataFrame()),
             ("mu_upper",DataFrame())]),
     snapshots=DataFrame(Bool[])
+
     )
     Network(
-        buses, generators, loads, lines, links, transformers, buses_t,
-        generators_t, loads_t, lines_t, links_t, storage_unists_t, transformers_t)
+        buses, generators, loads, lines, links, transformers, carriers, global_constraints, buses_t,
+        generators_t, loads_t, lines_t, links_t, storage_units_t, transformers_t)
 end
 
 
 function import_network(folder)
-    network = JuPSA.Network()
+    network = Network()
     !ispath("$folder") ? error("Path not existent") : nothing
     components = [component for component=fieldnames(network) if String(component)[end-1:end]!="_t"]
     for component=components

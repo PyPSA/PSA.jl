@@ -26,31 +26,26 @@ end
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
-function select_names(a, b)
-    mdict = idx(a)
-    ids = Array{Int,1}(0)
-    for i in b
-        push!(ids, mdict[i])
-    end
-    a[ids,:]
-end
 
 function select_by(dataframe, col, selector)
-    mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
-    ids = Array{Int,1}(0)
-    for i in selector
-        push!(ids, mdict[i])
+    if length(findin(dataframe[col], selector))==0
+        return dataframe[repeat(Bool[false],outer=nrow(dataframe)) , :]
+    else
+        mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
+        ids = Array{Int,1}(0)
+        for i in selector
+            push!(ids, mdict[i])
+        end
+        dataframe[ids,:]
     end
-    dataframe[ids,:]
 end
+select_names(a, b) = select_by(a, :name, b)
 
 
 function to_symbol(str)
     if typeof(str)==CategoricalArrays.CategoricalString{UInt32} || typeof(str) == String
         return Symbol(replace(str, " ", "_"))
-    elseif (typeof(str)==Vector{String} || typeof(str) == CategoricalArrays.CategoricalArray{
-                                                String,1,UInt32,String,CategoricalArrays.
-                                                CategoricalString{UInt32},Union{}})
+    elseif (typeof(str)==Vector{String} || typeof(str) == Array{Union{Missings.Missing, String},1})
         return [Symbol(replace(x, " ", "_")) for x in str]
     elseif typeof(str)==Int
         return Symbol("$str")
@@ -62,9 +57,7 @@ end
 function to_string(sym)
     if typeof(sym)==Symbol
         return replace(String(sym), "_", " ")
-    elseif (typeof(sym)==Vector{Symbol} || typeof(sym) == CategoricalArrays.CategoricalArray{
-                                                String,1,UInt32,String,CategoricalArrays.
-                                                CategoricalString{UInt32},Union{}})
+    elseif typeof(sym)==Vector{Symbol} || typeof(sym) == Array{Union{Missings.Missing, Symbol},1}
         return [replace(String(x), "_", " ") for x in sym]
     end
 end

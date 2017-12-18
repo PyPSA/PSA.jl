@@ -22,10 +22,8 @@ function lopf(network; solver_options...)
 # 1. add all generators to the model
     # 1.1 set different generator types
     fix_gens_b = ((.!network.generators[:p_nom_extendable]) .& (.!network.generators[:commitable]))
-    ext_gens_b = network.generators[:p_nom_extendable]
-    com_gens_b = network.generators[:commitable]
-    # TODO! vcat does not concat an Array of DataFrames
-
+    ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
+    com_gens_b = convert(BitArray, network.generators[:commitable])
     generators = vcat([network.generators[gens_b,:] for gens_b in [fix_gens_b, ext_gens_b, com_gens_b]
                         if sum(gens_b)>0]...)
     append_idx_col!(generators)
@@ -85,20 +83,20 @@ function lopf(network; solver_options...)
 
 # 2. add all lines to the model
     # 2.1 set different lines types
-    lines_fix = network.lines[.!network.lines[:s_nom_extendable],:]
-    lines_ext = network.lines[.!.!network.lines[:s_nom_extendable],:]
-    lines = [lines_fix; lines_ext]
-    append_idx_col!([lines_fix, lines_ext, lines])
+    fix_lines_b = (.!network.lines[:s_nom_extendable])
+    ext_lines_b = .!fix_lines_b
+    lines = vcat([network.lines[lines_b,:] for lines_b in [fix_lines_b, ext_lines_b] if sum(lines_b)>0]...)
+    append_idx_col!(lines)
 
     # 2.2 iterator bounds
-    LN_fix = nrow(lines_fix)
-    LN_ext = nrow(lines_ext)
+    LN_fix = sum(fix_lines_b)
+    LN_ext = sum(ext_lines_b)
 
     # 2.3 add line variables to the model
     @variables m begin
-        -lines_fix[l,:s_nom]  <=  ln_fix[l=1:LN_fix,t=1:T] <= lines_fix[l,:s_nom]
+        -lines[fix_lines_b,:s_nom][l]  <=  ln_fix[l=1:LN_fix,t=1:T] <= lines[fix_lines_b,:s_nom][l]
         ln_ext[l=1:LN_ext,t=1:T]
-        lines_ext[l,:s_nom_min] <=  ln_s_nom[l=1:LN_ext] <= lines_ext[l,:s_nom_max]
+        lines[ext_lines_b,:s_nom_min][l] <=  ln_s_nom[l=1:LN_ext] <= lines[ext_lines_b,:s_nom_max][l]
     end
 
     ln = [ln_fix; ln_ext]
@@ -112,59 +110,60 @@ function lopf(network; solver_options...)
 
 # 3. add all links to the model
     # 3.1 set different link types
-    links_fix = network.links[!network.links[:p_nom_extendable],:]
-    links_ext = network.links[network.links[:p_nom_extendable],:]
-    links = [links_fix; links_ext]
-    append_idx_col!([links_fix, links_ext, links])
+    fix_links_b = .!network.links[:p_nom_extendable]
+    ext_links_b = .!fix_links_b
+    links = (nrow(network.links)>0 ?  vcat([network.links[links_b,:] for links_b in 
+                [fix_links_b, ext_links_b] if sum(links_b)>0]...) : network.links)
+    append_idx_col!(links)
 
     # 3.2 iterator bounds
-    LK_fix = nrow(links_fix)
-    LK_ext = nrow(links_ext)
+    LK_fix = sum(fix_links_b)
+    LK_ext = sum(ext_links_b)
 
     #  3.3 set link variables
     @variables m begin
-       (links_fix[l, :p_nom].*links_fix[l, :p_min_pu]  <=  lk_fix[l=1:LK_fix,t=1:T]
-                <= links_fix[l, :p_nom].*links_fix[l, :p_max_pu])
+       ((links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l]  <=  lk_fix[l=1:LK_fix,t=1:T]
+                <= (links[fix_links_b, :p_nom].*links[fix_links_b, :p_max_pu])[l])
         lk_ext[l=1:LK_ext,t=1:T]
-        links_ext[l, :p_nom_min] <=  lk_p_nom[l=1:LK_ext] <= links_ext[l, :p_nom_max]
+        links[ext_links_b, :p_nom_min][l] <=  lk_p_nom[l=1:LK_ext] <= links[ext_links_b, :p_nom_max][l]
     end
     lk = [lk_fix; lk_ext]
 
     # 3.4 set constraints for extendable links
     @constraints(m, begin
-            [l=1:LK_ext,t=1:T], lk_ext[l,t] >= lk_p_nom[l].*links_ext[l, :p_min_pu]
-            [l=1:LK_ext,t=1:T], lk_ext[l,t] <= lk_p_nom[l].*links_ext[l, :p_max_pu]
+            [l=1:LK_ext,t=1:T], lk_ext[l,t] >= lk_p_nom[l].*links[ext_links_b, :p_min_pu][l]
+            [l=1:LK_ext,t=1:T], lk_ext[l,t] <= lk_p_nom[l].*links[ext_links_b, :p_max_pu][l]
     end)
 
 
 # 4. define storage_units
     # 4.1 set different storage_units types
-    storage_units_fix = network.storage_units[.!network.storage_units[:p_nom_extendable],:]
-    storage_units_ext = network.storage_units[network.storage_units[:p_nom_extendable],:]
+    fix_su_b = .!network.storage_units[:p_nom_extendable]
+    ext_su_b = .!fix_su_b
         # storage_units_spill = network.storage_units[inflow.max()>0,:]
-    storage_units = [storage_units_fix; storage_units_ext]
-    append_idx_col!([storage_units_fix, storage_units_ext, # storage_units_spill,
-                    storage_units])
+    storage_units = (nrow(network.storage_units)>0 ? vcat([network.storage_units[su_b,:] for su_b in 
+                    [fix_su_b, ext_su_b] if sum(su_b)>0]...) : network.storage_units)
+    append_idx_col!(storage_units)
 
     # 4.2 iterator bounds
-    SU_fix = nrow(storage_units_fix)
-    SU_ext = nrow(storage_units_ext)
+    SU_fix = sum(fix_su_b)
+    SU_ext = sum(ext_su_b)
     # SU_spill = nrow(storage_units_spill)
     SU = nrow(storage_units)
 
     #  4.3 set link variables
     @variables m begin
        (0 <=  su_dispatch_fix[s=1:SU_fix,t=1:T] <=
-                storage_units_fix[s, :p_nom].*storage_units_fix[s, :p_max_pu])
+                (storage_units[fix_su_b, :p_nom].*storage_units[fix_su_b, :p_max_pu])[s])
         su_dispatch_ext[s=1:SU_ext,t=1:T] >= 0
         (0 <=  su_store_fix[s=1:SU_fix,t=1:T] <=
-                 - storage_units_fix[s, :p_nom].*storage_units_fix[s, :p_min_pu])
+                 - (storage_units[fix_su_b, :p_nom].*storage_units[fix_su_b, :p_min_pu])[s])
         su_store_ext[s=1:SU_ext,t=1:T] >= 0
 
         su_p_nom[s=1:SU_ext] >= 0
 
-        (0 <= su_soc_fix[s=1:SU_fix,t=1:T] <= storage_units_fix[s,:max_hours]
-                                            .*storage_units_fix[s,:p_nom])
+        0 <= su_soc_fix[s=1:SU_fix,t=1:T] <= (storage_units[fix_su_b,:max_hours]
+                                            .*storage_units[fix_su_b,:p_nom])[s]
         su_soc_ext[s=1:SU_ext,t=1:T] >= 0
 
         # 0 <=  su_spill[l=1:SU_spill,t=1:T] <= inflow[l=1:SU_spill,t=1:T]
@@ -179,9 +178,9 @@ function lopf(network; solver_options...)
     not_cyclic_i = storage_units[.!storage_units[:cyclic_state_of_charge], :idx]
 
     @constraints(m, begin
-            [s=1:SU_ext,t=1:T], su_dispatch_ext[s,t] <= su_p_nom[s].*storage_units_ext[s, :p_max_pu]
-            [s=1:SU_ext,t=1:T], su_store_ext[s,t] <= - su_p_nom[s].*storage_units_ext[s, :p_min_pu]
-            [s=1:SU_ext,t=1:T], su_soc_ext[s,t] <= su_p_nom[s].*storage_units_ext[s, :max_hours]
+            [s=1:SU_ext,t=1:T], su_dispatch_ext[s,t] <= su_p_nom[s].*storage_units[ext_su_b, :p_max_pu][s]
+            [s=1:SU_ext,t=1:T], su_store_ext[s,t] <= - su_p_nom[s].*storage_units[ext_su_b, :p_min_pu][s]
+            [s=1:SU_ext,t=1:T], su_soc_ext[s,t] <= su_p_nom[s].*storage_units[ext_su_b, :max_hours][s]
 
             [s=is_cyclic_i,t=1], su_soc[s,t] == (su_soc[s,T]
                                         + storage_units[s,:efficiency_store] * su_store[s,t]
@@ -263,16 +262,16 @@ function lopf(network; solver_options...)
 
 ## 6. define nodal balance constraint
     @constraint(m, balance[n=1:N, t=1:T], (
-          sum(gn[idx_by(generators, :bus, [reverse_busidx[n]]), t])
+          sum(gn[findin(generators[:bus], [reverse_busidx[n]]), t])
         # + sum(gcom[idx_by(generators_com, :bus, [reverse_busidx[1]]), t])
-        + sum(ln[ idx_by(lines, :bus1, [reverse_busidx[n]]) ,t])
-        + sum(lk[ idx_by(links, :bus1, [reverse_busidx[n]]) ,t]) # *efficiency
-        + sum(su_dispatch[ idx_by(storage_units, :bus, [reverse_busidx[n]]) ,t])
+        + sum(ln[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
+        + sum(lk[ findin(links[:bus1], [reverse_busidx[n]]) ,t]) # *efficiency
+        + sum(su_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
         - network.loads_t["p"][t,to_symbol(reverse_busidx[n])]
-        - sum(ln[ idx_by(lines, :bus0, [reverse_busidx[n]]) ,t])
-        - sum(lk[ idx_by(links, :bus0, [reverse_busidx[n]]) ,t])
-        - sum(su_store[ idx_by(storage_units, :bus, [reverse_busidx[n]]) ,t])
+        - sum(ln[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
+        - sum(lk[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+        - sum(su_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
           == 0 ))
 
@@ -329,6 +328,60 @@ function lopf(network; solver_options...)
     end
 
 # 8. set global_constraints
+# only for co2_emissions till now
+
+    if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:_type])
+        co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
+        nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
+        emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions]))        
+        carrier_index(carrier) = findin(generators[:carrier], [carrier])
+        @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency], 
+                    gn[carrier_index(carrier),t]) for t=1:T)  
+                    * select_names(network.carriers, [carrier])[:co2_emissions]
+                    for carrier in network.carriers[:name]) .<=  co2_limit)
+    end
+# for gc in network.global_constraints
+    #     if network.global_constraints.loc[gc,"type"] == "primary_energy":
+
+    #         c = LConstraint(sense=network.global_constraints.loc[gc,"sense"])
+
+    #         c.rhs.constant = network.global_constraints.loc[gc,"constant"]
+
+    #         carrier_attribute = network.global_constraints.loc[gc,"carrier_attribute"]
+
+    #         for carrier in network.carriers.index:
+    #             attribute = network.carriers.at[carrier,carrier_attribute]
+    #             if attribute == 0.:
+    #                 continue
+    #             #for generators, use the prime mover carrier
+    #             gens = network.generators.index[network.generators.carrier == carrier]
+    #             c.lhs.variables.extend([(attribute
+    #                                      * (1/network.generators.at[gen,"efficiency"])
+    #                                      * network.snapshot_weightings[sn],
+    #                                      network.model.generator_p[gen,sn])
+    #                                     for gen in gens
+    #                                     for sn in snapshots])
+
+    #             #for storage units, use the prime mover carrier
+    #             #take difference of energy at end and start of period
+    #             sus = network.storage_units.index[(network.storage_units.carrier == carrier) & (~network.storage_units.cyclic_state_of_charge)]
+    #             c.lhs.variables.extend([(-attribute, network.model.state_of_charge[su,snapshots[-1]])
+    #                                     for su in sus])
+    #             c.lhs.constant += sum(attribute*network.storage_units.at[su,"state_of_charge_initial"]
+    #                                   for su in sus)
+
+    #             #for stores, inherit the carrier from the bus
+    #             #take difference of energy at end and start of period
+    #             stores = network.stores.index[(network.stores.bus.map(network.buses.carrier) == carrier) & (~network.stores.e_cyclic)]
+    #             c.lhs.variables.extend([(-attribute, network.model.store_e[store,snapshots[-1]])
+    #                                     for store in stores])
+    #             c.lhs.constant += sum(attribute*network.stores.at[store,"e_initial"]
+    #                                   for store in stores)
+    #         global_constraints[gc] = c
+
+    # l_constraint(network.model, "global_constraints",
+    #              global_constraints, list(network.global_constraints.index))
+
 
 #
 #
@@ -337,38 +390,40 @@ function lopf(network; solver_options...)
     @objective(m, Min, sum(dot(generators[:marginal_cost], gn[:,t]) for t=1:T)
                         + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:])
 
-                        + dot(lines_ext[:capital_cost], ln_s_nom[:])
-                        + dot(links_ext[:capital_cost], lk_p_nom[:])
+                        + dot(lines[ext_lines_b,:capital_cost], ln_s_nom[:])
+                        + dot(links[ext_links_b,:capital_cost], lk_p_nom[:])
 
                         + sum(dot(storage_units[:marginal_cost], su_dispatch[:,t]) for t=1:T)
-                        + dot(storage_units_ext[:capital_cost], su_p_nom[:])
+                        + dot(storage_units[ext_su_b, :capital_cost], su_p_nom[:])
                         )
 
     status = solve(m)
-# 9. extract optimisation results
+# 10. extract optimisation results
     if status==:Optimal
-        network.generators[:p_nom] = DataArray{Float64}(network.generators[:p_nom])
+        network.generators[:p_nom] =  Array{Float64,1}(network.generators[:p_nom])
         network.generators[ext_gens_b,:p_nom] = getvalue(gen_p_nom)
         network.generators_t["p"] = names!(DataFrame(transpose(getvalue(gn))),
                             [to_symbol(n) for n=generators[:name]])
 
-        network.lines[:s_nom] = DataArray{Float64}(network.lines[:s_nom])
-        network.lines[network.lines[:s_nom_extendable],:s_nom] = getvalue(ln_s_nom)
+        network.lines[:s_nom] = Array{Float64,1}(network.lines[:s_nom])
+        network.lines[BitArray(network.lines[:s_nom_extendable]),:s_nom] = getvalue(ln_s_nom)
         network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(ln))),
                             [to_symbol(n) for n=lines[:name]])
+
+        # network.buses_t["p"] =  DataFrame(ncols=nrow(network.buses))
+
         if nrow(links)>0
-            network.links[:p_nom] = DataArray{Float64}(network.links[:p_nom])
-            network.links[network.links[:p_nom_extendable],:p_nom] = getvalue(lk_p_nom)
+            network.links[:p_nom] = Array{Float64,1}(network.links[:p_nom])
+            network.links[BitArray(network.links[:p_nom_extendable]),:p_nom] = getvalue(lk_p_nom)
             network.links_t["p0"] = names!(DataFrame(transpose(getvalue(lk))),
                                 [to_symbol(n) for n=links[:name]])
         end
         if nrow(storage_units)>0
-            network.storage_units[:p_nom] = DataArray{Float64}(network.storage_units[:p_nom])
-            network.storage_units[network.storage_units[:p_nom_extendable],:p_nom] = getvalue(su_p_nom)
+            network.storage_units[:p_nom] = Array{Float64,1}(network.storage_units[:p_nom])
+            network.storage_units[BitArray(network.storage_units[:p_nom_extendable]),:p_nom] = getvalue(su_p_nom)
             network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(su_dispatch .- su_store))),
                                 [to_symbol(n) for n=storage_units[:name]])
         end
     end
     return m
 end
-

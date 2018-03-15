@@ -1,0 +1,1 @@
+possible issues in pypsa:  reducing initial infrastructure (p_nom) gives money, program does think to build infrastrucure from scratch (problem occurs with already implemented powerplants with given p_nom)

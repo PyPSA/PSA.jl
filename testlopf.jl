@@ -1,7 +1,8 @@
 import PSA
+using DataFrames
 # reload("PSA")
 
-network = PSA.import_network("/home/fabian/Desktop/PCA/intermediates/03-clusters/pre6-37/")
+network = PSA.import_network("/home/fabian/pca/intermediates/03-clusters/pre6-37")
 
 # network.loads_t["p"][:LT0_0] = 0
 PSA.set_snapshots!(network, 1:100)

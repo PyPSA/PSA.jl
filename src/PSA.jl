@@ -7,7 +7,7 @@ export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, t
 # include("auxilliaries.jl") already in lopf
 include("lopf.jl")
 
-mutable struct Network
+mutable struct network_mutable
     buses::DataFrame
     generators::DataFrame
     loads::DataFrame
@@ -30,10 +30,11 @@ end
 
 
 function Network(
+# static 
     buses=DataFrame(repeat([Bool[]], outer=13),
-[:name, :area, :area_offshore, :carrier, :control,
-:country, :type, :v_nom, :v_mag_pu_set, :v_mag_pu_min,
-:v_mag_pu_max, :x, :y]),
+        [:name, :area, :area_offshore, :carrier, :control,
+        :country, :type, :v_nom, :v_mag_pu_set, :v_mag_pu_min,
+        :v_mag_pu_max, :x, :y]),
 
     generators=DataFrame(repeat([Bool[]], outer=27),
         [:bus, :control, :type, :p_nom, :p_nom_extendable,
@@ -73,7 +74,7 @@ function Network(
 
     carriers = DataFrame(),
 
-    global_constraints=DataFrame(Bool[]), 
+    global_constraints=DataFrame(globalconstraint=Bool[]), 
 
 # time_dependent
     buses_t=Dict([("marginal_price",DataFrame()), ("v_ang", DataFrame()),
@@ -82,9 +83,13 @@ function Network(
     generators_t=Dict{String,DataFrame}(
             [("marginal_price",DataFrame()), ("v_ang", DataFrame()),
             ("v_mag_pu_set",DataFrame()), ("q", DataFrame()),
-            ("v_mag_pu", DataFrame()), ("p", DataFrame())]),
-    loads_t=Dict{String,DataFrame}([("q_set",DataFrame()), ("p_set", DataFrame()),
-            ("q", DataFrame()), ("p", DataFrame())]),
+            ("v_mag_pu", DataFrame()), ("p", DataFrame()),
+            ("p_min_pu", DataFrame()), ("p_max_pu", DataFrame())
+            ]),
+    loads_t=Dict{String,DataFrame}([
+            ("q_set",DataFrame()), ("p_set", DataFrame()),
+            ("q", DataFrame()), ("p", DataFrame())
+            ]),
     lines_t=Dict{String,DataFrame}([("q0",DataFrame()), ("q1", DataFrame()),
             ("p0",DataFrame()), ("p1", DataFrame()),
             ("mu_lower", DataFrame()), ("mu_upper", DataFrame())]),
@@ -98,12 +103,14 @@ function Network(
     transformers_t=Dict{String,DataFrame}([("p0",DataFrame()), ("p1", DataFrame()),
             ("q0", DataFrame()), ("q1", DataFrame()),
             ("mu_upper",DataFrame())]),
-    snapshots=DataFrame(Bool[])
+    snapshots=DataFrame([Bool[]], [:t])
 
     )
-    Network(
-        buses, generators, loads, lines, links, transformers, carriers, global_constraints, buses_t,
-        generators_t, loads_t, lines_t, links_t, storage_units_t, transformers_t)
+    network_mutable(
+        buses, generators, loads, lines, links, storage_units, transformers, carriers, 
+        global_constraints, 
+        buses_t, generators_t, loads_t, lines_t, links_t, storage_units_t, transformers_t, 
+        snapshots)
 end
 
 
@@ -113,16 +120,35 @@ function import_network(folder)
     components = [component for component=fieldnames(network) if String(component)[end-1:end]!="_t"]
     for component=components
         if ispath("$folder/$component.csv")
-            setfield!(network,component,readtable("$folder/$component.csv"; truestrings=["True"],
-                                            falsestrings=["False"]))
+            # fallback for missing values
+            try
+                setfield!(network,component,CSV.read("$folder/$component.csv"; truestring="True",
+                                                    falsestring="False"))
+            catch y
+                if (typeof(y)==Missings.MissingException) | (typeof(y) == BoundsError)
+                    setfield!(network,component,readtable("$folder/$component.csv"; truestrings=["True"],
+                                                    falsestrings=["False"]))
+
+                end
+            end
         end
     end
     components_t = [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
     for component_t=components_t
         for attr in keys(getfield(network, component_t))
             component = Symbol(String(component_t)[1:end-2])
-            ispath("$folder/$component-$attr.csv") ? getfield(network,component_t)[attr]= (
-                readtable("$folder/$component-$attr.csv"; truestrings=["True"], falsestrings=["False"]) ): nothing
+            if ispath("$folder/$component-$attr.csv")
+                # fallback for missing values for a non-null column type, might be deprecated soon 
+                try
+                    getfield(network,component_t)[attr]= (
+                    CSV.read("$folder/$component-$attr.csv"; truestring="True", falsestring="False") )
+                catch y
+                    if (typeof(y)==Missings.MissingException) | (typeof(y) == BoundsError)
+                        getfield(network,component_t)[attr]= (
+                            readtable("$folder/$component-$attr.csv"; truestrings=["True"], falsestrings=["False"]) )
+                    end                    
+                end
+            end
         end
     end
     return network

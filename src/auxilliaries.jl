@@ -42,26 +42,6 @@ end
 select_names(a, b) = select_by(a, :name, b)
 
 
-function to_symbol(str)
-    if typeof(str)==CategoricalArrays.CategoricalString{UInt32} || typeof(str) == String
-        return Symbol(replace(str, " ", "_"))
-    elseif (typeof(str)==Vector{String} || typeof(str) == Array{Union{Missings.Missing, String},1})
-        return [Symbol(replace(x, " ", "_")) for x in str]
-    elseif typeof(str)==Int
-        return Symbol("$str")
-    else
-        return str
-    end
-end
-
-function to_string(sym)
-    if typeof(sym)==Symbol
-        return replace(String(sym), "_", " ")
-    elseif typeof(sym)==Vector{Symbol} || typeof(sym) == Array{Union{Missings.Missing, Symbol},1}
-        return [replace(String(x), "_", " ") for x in sym]
-    end
-end
-
 function append_idx_col!(dataframe)
     if typeof(dataframe)==Vector{DataFrames.DataFrame}
         for df in dataframe
@@ -75,19 +55,19 @@ end
 function get_switchable_as_dense(network, component, attribute, snapshots=0)
     snapshots==0 ? snapshots = network.snapshots : nothing
     T = nrow(snapshots)
-    component_t = to_symbol(component * "_t")
-    component = to_symbol(component)
+    component_t = Symbol(component * "_t")
+    component = Symbol(component)
     dense = DataFrame()
     if in(attribute, keys(getfield(network, component_t)))
         dense = getfield(network, component_t)[attribute]
     end
-    cols = to_symbol(getfield(network, component)[:name])
-    not_included = [to_string(c) for c=cols if !in(c,names(dense))]
+    cols = Symbol.(getfield(network, component)[:name])
+    not_included = String.(setdiff(cols, names(dense)))
     if length(not_included)>0
-        attribute = to_symbol(attribute)
+        attribute = Symbol.(attribute)
         df = select_names(getfield(network, component), not_included)
-        df = DataFrames.names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
-                to_symbol(not_included))
+        df = names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
+                Symbol.(not_included))
         dense = [dense df]
     end
     return dense[cols]
@@ -130,8 +110,8 @@ function calculate_dependent_values!(network)
     for df_name=keys(network.loads_t)
         if nrow(network.loads_t[df_name])>1
             for bus=[bus for bus in network.buses[:name] if 
-                !in(to_symbol(bus), names(network.loads_t[df_name]))]
-                
+                !in(Symbol(bus), names(network.loads_t[df_name]))]
+                set_default(network.loads_t[df_name], bus, 0)
             end
         end
     end 
@@ -141,6 +121,9 @@ function to_graph(network)
     busidx = idx(network.buses)
     g = DiGraph(length(busidx))
     for l in eachrow(network.lines)
+        add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
+    end 
+    for l in eachrow(network.links)
         add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
     end 
     return g

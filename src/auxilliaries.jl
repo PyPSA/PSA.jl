@@ -78,6 +78,8 @@ function calculate_dependent_values!(network)
     function set_default(dataframe, col, default)
         !in(col, names(dataframe)) ? dataframe[col] = default : nothing
     end
+
+    # generators
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
                 (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
                 (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
@@ -85,6 +87,8 @@ function calculate_dependent_values!(network)
     for (col, default) in defaults
         set_default(network.generators, col, default)
     end
+
+    # lines
     network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
     defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf),
                 (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
@@ -96,17 +100,30 @@ function calculate_dependent_values!(network)
     network.lines[:b_pu] = network.lines[:b].*network.lines[:v_nom].^2
     network.lines[:g_pu] = network.lines[:g].*network.lines[:v_nom].^2
 
+    # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
                 (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0)]
     for (col, default) in defaults
         set_default(network.links, col, default)
     end
-        defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
+
+    # storage_units
+    defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
                     (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                    (:efficiency_dispatch, 1)]
-        for (col, default) in defaults
-            set_default(network.storage_units, col, default)
+                    (:efficiency_dispatch, 1), (:inflow, 0)]
+    for (col, default) in defaults
+        set_default(network.storage_units, col, default)
     end
+
+    # storages
+    defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
+                    (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
+                    (:efficiency_dispatch, 1), (:inflow, 0)]
+    for (col, default) in defaults
+        set_default(network.storage_units, col, default)
+    end
+
+    # loads_t
     for df_name=keys(network.loads_t)
         if nrow(network.loads_t[df_name])>1
             for bus=[bus for bus in network.buses[:name] if 

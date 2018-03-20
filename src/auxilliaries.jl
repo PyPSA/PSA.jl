@@ -5,7 +5,25 @@ copy!(networkx, pyimport("networkx" ))
 
 
 function time_dependent_components(network)
-    return [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    fields = String.(fieldnames(network))
+    components = []
+    for field=fields
+        if field[end-1:end] == "_t"
+            push!(components, field)
+        end
+    end
+    Symbol.(components) 
+end
+
+function static_components(network)
+    fields = String.(fieldnames(network))
+    components = []
+    for field=fields
+        if field[end-1:end] != "_t"
+            push!(components, field)
+        end
+    end
+    Symbol.(components) 
 end
 
 function set_snapshots!(network, snapshots)
@@ -20,9 +38,19 @@ function set_snapshots!(network, snapshots)
 end
 
 
+function align_component_order!(network)
+    components_t = time_dependent_components(network)
+    for comp=components_t
+        order = Symbol.(getfield(network, Symbol(String(comp)[1:end-2]))[:name])
+        for attr in keys(getfield(network, comp))
+            if length(getfield(network,comp)[attr])==length(order)
+                getfield(network,comp)[attr]= getfield(network,comp)[attr][:, order]
+            end
+        end 
+    end
+end
 
-
-# auxilliary functions
+# auxilliary funcitons 
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
@@ -45,10 +73,10 @@ select_names(a, b) = select_by(a, :name, b)
 function append_idx_col!(dataframe)
     if typeof(dataframe)==Vector{DataFrames.DataFrame}
         for df in dataframe
-            df[:idx] = 1:nrow(df)
+            df[:idx] = collect(1:nrow(df))
         end
     else
-        dataframe[:idx] = 1:nrow(dataframe)
+        dataframe[:idx] = collect(1:nrow(dataframe))
     end
 end
 

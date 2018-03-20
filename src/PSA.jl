@@ -144,7 +144,7 @@ end
 function import_network(folder)
     network = Network()
     !ispath("$folder") ? error("Path not existent") : nothing
-    components = [component for component=fieldnames(network) if String(component)[end-1:end]!="_t"]
+    components = static_components(network)
     for component=components
         if ispath("$folder/$component.csv")
             # fallback for missing values
@@ -160,7 +160,7 @@ function import_network(folder)
             end
         end
     end
-    components_t = [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    components_t = time_dependent_components(network)
     for component_t=components_t
         for attr in keys(getfield(network, component_t))
             component = Symbol(String(component_t)[1:end-2])

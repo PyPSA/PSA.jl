@@ -1,4 +1,4 @@
-import Gurobi
+using Gurobi
 using JuMP
 # using Ipopt
 
@@ -16,10 +16,13 @@ function lopf(network; solver_options...)
 
 
 
-    env = Gurobi.Env()
+    #env = Gurobi.Env()
+    print(solver_options)
 
-    Gurobi.setparams!(env; solver_options...)
-    m = Model(solver=Gurobi.GurobiSolver())
+    #Gurobi.setparams!(env; solver_options...)
+    #setparam!(env, "Crossover", 0)
+    m = Model(solver=GurobiSolver(Crossover=0,Method=2,Threads=2, LogFile="solver.log", BarConvTol=1e-8, FeasibilityTol=1e-6))
+    #m = Model(solver=GurobiSolver(;solver_options))
 
     calculate_dependent_values!(network)
     buses = network.buses

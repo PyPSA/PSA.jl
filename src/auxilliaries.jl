@@ -12,7 +12,7 @@ function time_dependent_components(network)
             push!(components, field)
         end
     end
-    Symbol.(components) 
+    Symbol.(components)
 end
 
 function static_components(network)
@@ -23,7 +23,7 @@ function static_components(network)
             push!(components, field)
         end
     end
-    Symbol.(components) 
+    Symbol.(components)
 end
 
 function set_snapshots!(network, snapshots)
@@ -46,11 +46,11 @@ function align_component_order!(network)
             if length(getfield(network,comp)[attr])==length(order)
                 getfield(network,comp)[attr]= getfield(network,comp)[attr][:, order]
             end
-        end 
+        end
     end
 end
 
-# auxilliary funcitons 
+# auxilliary funcitons
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
@@ -154,27 +154,27 @@ function calculate_dependent_values!(network)
     # loads_t
     for df_name=keys(network.loads_t)
         if nrow(network.loads_t[df_name])>1
-            for bus=[bus for bus in network.buses[:name] if 
+            for bus=[bus for bus in network.loads[:name] if
                 !in(Symbol(bus), names(network.loads_t[df_name]))]
                 set_default(network.loads_t[df_name], bus, 0)
             end
         end
-    end 
+    end
 end
 
-function to_graph(network) 
+function to_graph(network)
     busidx = idx(network.buses)
     g = DiGraph(length(busidx))
     for l in eachrow(network.lines)
         add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
-    end 
+    end
     for l in eachrow(network.links)
         add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
-    end 
+    end
     return g
 end
 
-# function to_graphx(network) 
+# function to_graphx(network)
 #     busidx = idx(network.buses)
 #     g = networkx[:Graph]()
 #     g[:add_nodes_from](busidx)
@@ -204,7 +204,7 @@ function ptdf_matrix(network)
     return H .- H[:,1]
 end
 
-function get_cycles(network) 
+function get_cycles(network)
     busidx = idx(network.buses)
     g = networkx[:Graph]()
     g[:add_nodes_from](busidx)

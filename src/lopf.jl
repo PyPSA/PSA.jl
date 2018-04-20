@@ -7,9 +7,9 @@ include("auxilliaries.jl")
 
 
 function lopf(network; solver_options...)
-    # This function is organized as the following: 
+    # This function is organized as the following:
     # For every component in the network, i.e. generators, lines, links, storage_units,
-    # stores, there is one section. 
+    # stores, there is one section.
     # In every section the different types of the variable is defined (fixed, extendable)
     # with referncing booleans. Then the is at first declared (with its bounds for fixed variables)
 
@@ -17,9 +17,10 @@ function lopf(network; solver_options...)
 
 
     env = Gurobi.Env()
+
     Gurobi.setparams!(env; solver_options...)
     m = Model(solver=Gurobi.GurobiSolver())
-    
+
     calculate_dependent_values!(network)
     buses = network.buses
     reverse_busidx = rev_idx(buses)
@@ -104,7 +105,7 @@ function lopf(network; solver_options...)
 
 # 2. add all lines to the model
     # 2.1 set different lines types
-    lines = network.lines 
+    lines = network.lines
     fix_lines_b = (.!lines[:s_nom_extendable])
     ext_lines_b = .!fix_lines_b
 
@@ -149,7 +150,7 @@ function lopf(network; solver_options...)
         LK_ext[l=1:N_ext,t=1:T]
         links[ext_links_b, :p_nom_min][l] <=  LK_p_nom[l=1:N_ext] <= links[ext_links_b, :p_nom_max][l]
     end
-    
+
     # 3.4 set constraints for extendable links
     @constraints(m, begin
     [l=1:N_ext,t=1:T], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
@@ -208,11 +209,11 @@ function lopf(network; solver_options...)
     SU_soc = [SU_soc_fix; SU_soc_ext]
     SU_spill = [SU_spill_fix; SU_spill_ext]
 
-    storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]  
-    inflow = [inflow[:,fix_sus_b] inflow[:,ext_sus_b]]    
+    storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
+    inflow = [inflow[:,fix_sus_b] inflow[:,ext_sus_b]]
 
     ext_sus_b = BitArray(storage_units[:p_nom_extendable])
-    
+
     is_cyclic_i = collect(1:N_sus)[BitArray(storage_units[:cyclic_state_of_charge])]
     not_cyclic_i = collect(1:N_sus)[.!storage_units[:cyclic_state_of_charge]]
 
@@ -229,7 +230,7 @@ function lopf(network; solver_options...)
             [s=1:N_sus,t=2:T], SU_soc[s,t] == (SU_soc[s,t-1]
                                             + storage_units[s,:efficiency_store] * SU_store[s,t]
                                             - storage_units[s,:efficiency_dispatch] * SU_dispatch[s,t]
-                                            + inflow[t,s] - SU_spill[s,t] ) 
+                                            + inflow[t,s] - SU_spill[s,t] )
 
         end)
 
@@ -238,7 +239,7 @@ function lopf(network; solver_options...)
 # 5. define stores
 # 5.1 set different stores types
     stores = network.stores
-    
+
     fix_stores_b = .!stores[:e_nom_extendable]
     ext_stores_b = .!fix_stores_b
 
@@ -285,7 +286,7 @@ function lopf(network; solver_options...)
     ST_store = [ST_store_fix; ST_store_ext]
     ST_soc = [ST_soc_fix; ST_soc_ext]
     ST_spill = [ST_spill_fix, ST_spill_ext]
-    stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]  
+    stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
 
     inflow = [inflow[:,fix_stores_b] inflow[:,ext_stores_b]]
 
@@ -315,13 +316,29 @@ function lopf(network; solver_options...)
 # --------------------------------------------------------------------------------------------------------
 
 ## 6. define nodal balance constraint
+
+    #load data in correct order
+    loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+    function series_sum(s)
+        if length(s) == 0
+	    return 0.
+	else
+	    total = 0.
+	    for i in 1:length(s)
+	        total += s[1,i]
+	    end
+	    return total
+	end
+    end
+
     @constraint(m, balance[n=1:N, t=1:T], (
           sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
         + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
         + sum(LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t]) # *efficiency
         + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-        - network.loads_t["p"][t,Symbol(reverse_busidx[n])]
+        - series_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])])
         - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
         - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
         - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
@@ -389,13 +406,13 @@ function lopf(network; solver_options...)
 # 8. set global_constraints
 # only for co2_emissions till now
 
-    if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:_type])
+    if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
-        emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions]))        
+        emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions]))
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
-        @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency], 
-                    G[carrier_index(carrier),t]) for t=1:T)  
+        @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
+                    G[carrier_index(carrier),t]) for t=1:T)
                     * select_names(network.carriers, [carrier])[:co2_emissions]
                     for carrier in network.carriers[:name]) .<=  co2_limit)
     end
@@ -403,7 +420,7 @@ function lopf(network; solver_options...)
 # --------------------------------------------------------------------------------------------------------
 
 # 9. set objective function
-    @objective(m, Min, 
+    @objective(m, Min,
                         sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                         # consider already build infrastructur
                         + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:]  )
@@ -456,7 +473,7 @@ function lopf(network; solver_options...)
 
             storage_units[:p_nom_opt] = deepcopy(storage_units[:p_nom])
             network.storage_units[ext_sus_b,:p_nom_opt] = getvalue(SU_p_nom)
-            # network.storage_units_t["spill"] = spillage 
+            # network.storage_units_t["spill"] = spillage
             # network.storage_units_t["spill"][:,spill_sus_b] = names!(DataFrame(transpose(getvalue(SU_spill))),
             #                     names(spillage)[spill_sus_b])
             network.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),

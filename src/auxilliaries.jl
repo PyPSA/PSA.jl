@@ -211,3 +211,12 @@ function get_cycles(network)
     g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
     networkx[:cycle_basis](g)
 end
+
+
+function row_sum(df, row_id)
+    if length(df[row_id,:]) == 0
+        return 0.
+    else
+        return sum([df[row_id,i] for i in 1:length(df[row_id,:])])
+    end
+end

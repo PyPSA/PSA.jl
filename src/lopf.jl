@@ -323,25 +323,13 @@ function lopf(network; solver_options...)
     #load data in correct order
     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-    function series_sum(s)
-        if length(s) == 0
-	    return 0.
-	else
-	    total = 0.
-	    for i in 1:length(s)
-	        total += s[1,i]
-	    end
-	    return total
-	end
-    end
-
     @constraint(m, balance[n=1:N, t=1:T], (
           sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
         + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
         + sum(LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t]) # *efficiency
         + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-        - series_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])])
+        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
         - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
         - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
         - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])

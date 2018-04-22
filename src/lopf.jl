@@ -1,28 +1,26 @@
-using Gurobi
 using JuMP
-# using Ipopt
 
 
 include("auxilliaries.jl")
 
 
-function lopf(network; solver_options...)
+function lopf(network, solver)
     # This function is organized as the following:
     # For every component in the network, i.e. generators, lines, links, storage_units,
     # stores, there is one section.
     # In every section the different types of the variable is defined (fixed, extendable)
-    # with referncing booleans. Then the is at first declared (with its bounds for fixed variables)
+    # with referencing booleans. Then the is at first declared (with its bounds for fixed variables)
+
+    #solver is e.g.
+
+    #using Gurobi
+    #solver = GurobiSolver(Method=1,Threads=2)
+
+    #using Clp
+    #solver = ClpSolver()
 
 
-
-
-    #env = Gurobi.Env()
-    print(solver_options)
-
-    #Gurobi.setparams!(env; solver_options...)
-    #setparam!(env, "Crossover", 0)
-    m = Model(solver=GurobiSolver(Crossover=0,Method=2,Threads=2, LogFile="solver.log", BarConvTol=1e-8, FeasibilityTol=1e-6))
-    #m = Model(solver=GurobiSolver(;solver_options))
+    m = Model(solver=solver)
 
     calculate_dependent_values!(network)
     buses = network.buses

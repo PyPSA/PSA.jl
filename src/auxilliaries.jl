@@ -107,11 +107,17 @@ function calculate_dependent_values!(network)
         !in(col, names(dataframe)) ? dataframe[col] = default : nothing
     end
 
+    #buses
+    defaults = [(:v_nom, 1.)]
+    for (col, default) in defaults
+        set_default(network.buses, col, default)
+    end
+
     # generators
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
                 (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
                 (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
-                (:p_nom, NaN)]
+                (:p_nom, 0.),(:marginal_cost, 0)]
     for (col, default) in defaults
         set_default(network.generators, col, default)
     end
@@ -130,25 +136,28 @@ function calculate_dependent_values!(network)
 
     # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
-                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0)]
+                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
+                (:marginal_cost, 0)]
     for (col, default) in defaults
         set_default(network.links, col, default)
     end
 
     # storage_units
     defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
-                    (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                    (:efficiency_dispatch, 1), (:inflow, 0)]
+                (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
+                (:cyclic_state_of_charge, false),
+                (:state_of_charge_initial, 0.), (:p_nom, 0.),
+                (:efficiency_dispatch, 1), (:inflow, 0)]
     for (col, default) in defaults
         set_default(network.storage_units, col, default)
     end
 
-    # storages
+    # stores
     defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
                     (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                    (:efficiency_dispatch, 1), (:inflow, 0)]
+                    (:efficiency_dispatch, 1),(:inflow, 0)]
     for (col, default) in defaults
-        set_default(network.storage_units, col, default)
+        set_default(network.stores, col, default)
     end
 
     # loads_t

@@ -221,16 +221,16 @@ function lopf(network, solver)
     @constraints(m, begin
             [s=is_cyclic_i], SU_soc[s,1] == (SU_soc[s,T]
                                         + storage_units[s,:efficiency_store] * SU_store[s,1]
-                                        - storage_units[s,:efficiency_dispatch] * SU_dispatch[s,1]
+                                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
                                         + inflow[1,s] - SU_spill[s,1] )
             [s=not_cyclic_i], SU_soc[s,1] == (storage_units[s,:state_of_charge_initial]
-                                        + storage_units[s,:efficiency_store] * SU_store[s,t]
-                                        - storage_units[s,:efficiency_dispatch] * SU_dispatch[s,t]
-                                        + inflow[t,s] - SU_spill[s,t])
+                                        + storage_units[s,:efficiency_store] * SU_store[s,1]
+                                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
+                                        + inflow[1,s] - SU_spill[s,1])
 
             [s=1:N_sus,t=2:T], SU_soc[s,t] == (SU_soc[s,t-1]
                                             + storage_units[s,:efficiency_store] * SU_store[s,t]
-                                            - storage_units[s,:efficiency_dispatch] * SU_dispatch[s,t]
+                                            - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,t]
                                             + inflow[t,s] - SU_spill[s,t] )
 
         end)

@@ -5,11 +5,11 @@
 
 PSA.jl is a partial implementation of [Python for Power System
 Analysis (PyPSA)](https://github.com/PyPSA/PyPSA) in
-the [Julia](https://julialang.org/) programming language.
+the programming language [Julia](https://julialang.org/).
 
 PSA.jl has been created primarily to take advantage of the speed,
-readability and features of the
-[JuMP](https://github.com/JuliaOpt/JuMP.jl) optimisation framework.
+readability and features of the optimisation framework
+[JuMP](https://github.com/JuliaOpt/JuMP.jl).
 
 PSA.jl does not yet exist independently of PyPSA, in that you have to
 build your network first in PyPSA and export it in CSV format before

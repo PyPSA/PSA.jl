@@ -159,6 +159,16 @@ function import_network(folder)
                 end
             end
         end
+        # convert any ints to floats
+        df = getfield(network, component)
+        for name in names(df)
+            if name == :name
+                nothing
+            elseif typeof(df[name]) == Array{Union{Int64, Missings.Missing},1}
+                println("converting column $name of $component from Int to Float")
+                df[name] = float(df[name])
+            end
+        end
     end
     components_t = time_dependent_components(network)
     for component_t=components_t

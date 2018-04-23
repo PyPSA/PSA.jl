@@ -117,7 +117,7 @@ function calculate_dependent_values!(network)
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
                 (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
                 (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
-                (:p_nom, 0.),(:marginal_cost, 0)]
+                (:p_nom, 0.),(:marginal_cost, 0),(:p_nom_opt, 0.)]
     for (col, default) in defaults
         set_default(network.generators, col, default)
     end

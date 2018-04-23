@@ -124,7 +124,7 @@ function calculate_dependent_values!(network)
 
     # lines
     network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
-    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf),
+    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
                 (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
     for (col, default) in defaults
         set_default(network.lines, col, default)
@@ -137,7 +137,7 @@ function calculate_dependent_values!(network)
     # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
                 (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
-                (:marginal_cost, 0)]
+                (:marginal_cost, 0), (:p_nom, 0.)]
     for (col, default) in defaults
         set_default(network.links, col, default)
     end
@@ -155,7 +155,7 @@ function calculate_dependent_values!(network)
     # stores
     defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
                     (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                    (:efficiency_dispatch, 1),(:inflow, 0)]
+                    (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.)]
     for (col, default) in defaults
         set_default(network.stores, col, default)
     end

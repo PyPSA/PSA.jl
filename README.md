@@ -27,8 +27,9 @@ What is not yet implemented, but coming soon:
 * Unit commitment
 * Stores
 * LOPF with non-unity snapshot weightings
-* Link efficiency
+* Links with more than one output
 * Standing losses in storage
+* Some time-dependent efficiencies and max/min limits
 
 
 

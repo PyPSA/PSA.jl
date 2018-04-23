@@ -324,7 +324,8 @@ function lopf(network, solver)
     @constraint(m, balance[n=1:N, t=1:T], (
           sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
         + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
-        + sum(LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t]) # *efficiency
+        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+              .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
         + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
         - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)

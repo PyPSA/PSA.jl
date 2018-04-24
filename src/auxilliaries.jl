@@ -137,7 +137,7 @@ function calculate_dependent_values!(network)
     # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
                 (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
-                (:marginal_cost, 0), (:p_nom, 0.)]
+                (:marginal_cost, 0), (:p_nom, 0.), (:efficiency, 1)]
     for (col, default) in defaults
         set_default(network.links, col, default)
     end

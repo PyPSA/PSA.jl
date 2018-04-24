@@ -6,11 +6,26 @@ include("auxilliaries.jl")
 
 function lopf(network, solver)
     # This function is organized as the following:
-    # For every component in the network, i.e. generators, lines, links, storage_units,
-    # stores, there is one section.
-    # In every section the different types of the variable is defined (fixed, extendable)
-    # with referencing booleans. Then the is at first declared (with its bounds for fixed variables)
-
+    # 
+    # 0.        Initialize model
+    # 1. - 5.   add generators,  lines, links, storage_units,
+    #           stores to the model:
+    #               .1 separate different types from each other
+    #               .2 define number of different types
+    #               .3 add variables to the model 
+    #               .4 set contraints for extendables
+    #               .5 set charging constraints (storage_units and stores)
+    # 6.        set Kirchhoff's Current Law (nodal balance)
+    # 7.        set Kirchhoff Voltage Law
+    # 8.        set global constraints
+    # 9.        objective function and solving
+    # 10.       extract results
+    
+    # Conventions: 
+    #   - all variable names start with capital letters 
+    #   - Additional capital words are N (number of buses), T (number of snapshots)
+    #       and N_* defining the nuber of considered variables added to the model.
+    
     #solver is e.g.
 
     #using Gurobi
@@ -114,7 +129,7 @@ function lopf(network, solver)
     N_fix = sum(fix_lines_b)
     N_ext = sum(ext_lines_b)
 
-    # 2.3 add line variables to the model
+    # 2.3 add variables
     @variables m begin
         -lines[fix_lines_b,:s_nom][l]  <=  LN_fix[l=1:N_fix,t=1:T] <= lines[fix_lines_b,:s_nom][l]
         LN_ext[l=1:N_ext,t=1:T]
@@ -177,7 +192,7 @@ function lopf(network, solver)
     N_ext = sum(ext_sus_b)
     N_sus = nrow(storage_units)
 
-    #  4.3 set link variables
+    #  4.3 set variables
     @variables m begin
        (0 <=  SU_dispatch_fix[s=1:N_fix,t=1:T] <=
                 (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_max_pu])[s])
@@ -252,8 +267,7 @@ function lopf(network, solver)
     N_st = N_fix + N_ext
 
 
-
-    #  5.3 set link variables
+    #  5.3 set variables
     @variables m begin
        (0 <=  ST_dispatch_fix[s=1:N_fix,t=1:T] <=
                 (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_max_pu])[s])

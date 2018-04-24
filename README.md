@@ -44,8 +44,8 @@ What is not yet implemented, but coming soon:
 
 ## Basic usage
 
-`git clone git@github.com:PyPSA/PSA.jl.git` to folder `\path\to\lib`
-of your choice.
+To install PSA.jl, execute `git clone git@github.com:PyPSA/PSA.jl.git`
+in the folder `/path/to/lib` of your choice.
 
 Then in your Julia script:
 

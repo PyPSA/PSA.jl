@@ -4,7 +4,6 @@ using DataFrames, CSV, LightGraphs
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
-# include("auxilliaries.jl") already in lopf
 include("lopf.jl")
 
 mutable struct network_mutable
@@ -170,7 +169,7 @@ function import_network(folder)
             end
         end
     end
-    components_t = time_dependent_components(network)
+    components_t = dynamic_components(network)
     for component_t=components_t
         for attr in keys(getfield(network, component_t))
             component = Symbol(String(component_t)[1:end-2])

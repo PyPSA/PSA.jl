@@ -1,16 +1,15 @@
 using LightGraphs
 using PyCall
+using Missings
 const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
 
-function time_dependent_components(network)
+function dynamic_components(network)
     fields = String.(fieldnames(network))
-    components = []
-    for field=fields
-        if field[end-1:end] == "_t"
-            push!(components, field)
-        end
+    components = []; 
+    for field=fields 
+        field[end-1:end] == "_t" ? push!(components, field) : nothing  
     end
     Symbol.(components)
 end
@@ -19,15 +18,13 @@ function static_components(network)
     fields = String.(fieldnames(network))
     components = []
     for field=fields
-        if field[end-1:end] != "_t"
-            push!(components, field)
-        end
+        field[end-1:end] != "_t" ? push!(components, field) : nothing
     end
     Symbol.(components)
 end
 
 function set_snapshots!(network, snapshots)
-    for field=time_dependent_components(network)
+    for field=dynamic_components(network)
         for df_name=keys(getfield(network,field))
             if nrow(getfield(network,field)[df_name])>0
                 getfield(network,field)[df_name] = getfield(network,field)[df_name][snapshots, :]
@@ -39,8 +36,9 @@ end
 
 
 function align_component_order!(network)
-    components_t = time_dependent_components(network)
-    for comp=components_t
+    # align the column order of dynamic_component (e.g generators_t{["p_max_pu"]) with row order of 
+    # static component (generators[:name])
+    for comp = dynamic_components(network)
         order = Symbol.(getfield(network, Symbol(String(comp)[1:end-2]))[:name])
         for attr in keys(getfield(network, comp))
             if length(getfield(network,comp)[attr])==length(order)
@@ -54,6 +52,78 @@ end
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
+
+
+# try to match pandas useful reindex and set_index 
+function reindex(df, index = nothing, columns = nothing; index_col=:name, fill_value=Missing)
+    if columns != nothing
+        columns = Symbol.(columns)
+        in(index_col, columns) ? columns =  deleteat!(columns, findin(columns, [index_col])) : nothing
+        columns = append!([index_col], columns )
+        new_df = DataFrame()
+        filling_column = DataFrame(missing=repeat([fill_value], inner=nrow(df)))
+        for col=columns
+            in(col, names(df) ) ? new_df = [new_df df[[col]]]: new_df = [new_df rename(filling_column, :missing=>col)] 
+        end
+        df = new_df
+    end
+    if index != nothing
+        # catch all index entries that are in df, also duplicate values
+        new_df = df[repeat([false], inner=nrow(df)), :]
+        index_column = df[index_col]
+        for i=1:nrow(df)
+            in(index_column[i], index) ? new_df = [new_df; df[i,:]] : nothing 
+        end
+
+        # catch every entry that is not in df
+        not_in_df = setdiff(index, df[index_col])
+        if length(not_in_df)>0
+            filling_row = DataFrame(repeat([fill_value], outer=(length(not_in_df),length(df)) ), names(df))
+            filling_row[index_col] = not_in_df
+            new_df = [new_df ; filling_row]
+        end
+        # for i=index
+        #     in(col, names(df) ) ? new_df = [new_df df[[col]]]: new_df = [new_df rename(filling_column, :missing=>col)] 
+        # end
+    end
+    new_df
+    # mdict = Dict(zip(index, 1:length(index)))
+end
+
+
+
+function reindex2(df, index = nothing, columns = nothing; index_col=:name, fill_value=Missing)
+    if columns != nothing
+        columns = Symbol.(columns)
+        in(index_col, columns) ? columns =  deleteat!(columns, findin(columns, [index_col])) : nothing
+        columns = append!([index_col], columns )
+        new_df = DataFrame()
+        filling_column = repeat([fill_value], inner=nrow(df))
+        for col=columns
+             new_df[col] = in(col, names(df) ) ?  df[col] : filling_column 
+        end
+    end
+
+    if index != nothing
+        
+        new_df_cat = []
+        not_in_index_col = setdiff(Array(index), new_df[index_col] )
+        if length(not_in_index_col) > 0
+            filling_row = DataFrame(repeat([fill_value], outer=(length(not_in_index_col),length(new_df)) ), names(new_df))
+            filling_row[index_col] = not_in_index_col
+            filling_row = filling_row[names(new_df)]
+            push!(new_df_cat, filling_row)
+        end
+
+        in_index_col = findin(new_df[index_col], Array(index))
+        if length(in_index_col) > 0
+            push!(new_df_cat, new_df[in_index_col, :])
+        end
+        new_df = vcat(new_df_cat)
+    end
+    new_df
+end
+
 
 function select_by(dataframe, col, selector)
     if length(findin(dataframe[col], selector))==0
@@ -100,6 +170,13 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
     end
     return dense[cols]
 end
+
+
+function make_fallback_getter(df)
+    def = 1.
+    (t,x)->in(x, names(df)) ? df[t, x] : def
+end
+
 
 
 function calculate_dependent_values!(network)

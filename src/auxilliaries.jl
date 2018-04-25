@@ -54,74 +54,49 @@ rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
 
 
-# try to match pandas useful reindex and set_index 
-function reindex(df, index = nothing, columns = nothing; index_col=:name, fill_value=Missing)
+# try to match pandas useful reindex and set_index, note that it also allows to index from 
+# a duplicate axis. 
+function reindex(df; index = nothing, columns = nothing, index_col=:name, fill_value=Missing)
+    new_df = df
     if columns != nothing
-        columns = Symbol.(columns)
-        in(index_col, columns) ? columns =  deleteat!(columns, findin(columns, [index_col])) : nothing
-        columns = append!([index_col], columns )
-        new_df = DataFrame()
-        filling_column = DataFrame(missing=repeat([fill_value], inner=nrow(df)))
-        for col=columns
-            in(col, names(df) ) ? new_df = [new_df df[[col]]]: new_df = [new_df rename(filling_column, :missing=>col)] 
+        columns = Symbol.(columns)        
+        
+        missing_cols = setdiff(columns, names(df))
+        if length(missing_cols)>0
+            missing_cols = DataFrame(repeat([fill_value], 
+            outer=(nrow(new_df), length(missing_cols) ) ), missing_cols)
+            new_df = hcat(new_df, missing_cols)
         end
-        df = new_df
+        columns = Int64[] ; for col=columns append!(order , findin(names(new_df), [col]) ) end         
+    else
+        columns=names(new_df)
     end
-    if index != nothing
-        # catch all index entries that are in df, also duplicate values
-        new_df = df[repeat([false], inner=nrow(df)), :]
-        index_column = df[index_col]
-        for i=1:nrow(df)
-            in(index_column[i], index) ? new_df = [new_df; df[i,:]] : nothing 
-        end
-
-        # catch every entry that is not in df
-        not_in_df = setdiff(index, df[index_col])
-        if length(not_in_df)>0
-            filling_row = DataFrame(repeat([fill_value], outer=(length(not_in_df),length(df)) ), names(df))
-            filling_row[index_col] = not_in_df
-            new_df = [new_df ; filling_row]
-        end
-        # for i=index
-        #     in(col, names(df) ) ? new_df = [new_df df[[col]]]: new_df = [new_df rename(filling_column, :missing=>col)] 
-        # end
-    end
-    new_df
-    # mdict = Dict(zip(index, 1:length(index)))
-end
-
-
-
-function reindex2(df, index = nothing, columns = nothing; index_col=:name, fill_value=Missing)
-    if columns != nothing
-        columns = Symbol.(columns)
-        in(index_col, columns) ? columns =  deleteat!(columns, findin(columns, [index_col])) : nothing
-        columns = append!([index_col], columns )
-        new_df = DataFrame()
-        filling_column = repeat([fill_value], inner=nrow(df))
-        for col=columns
-             new_df[col] = in(col, names(df) ) ?  df[col] : filling_column 
-        end
-    end
+    in(index_col, columns) ? deleteat!(columns, findin(columns, [index_col])) : nothing
+    columns = append!([index_col], columns)        
+    new_df = new_df[columns]
 
     if index != nothing
         
-        new_df_cat = []
+        # deal with nonincluded index values
         not_in_index_col = setdiff(Array(index), new_df[index_col] )
         if length(not_in_index_col) > 0
-            filling_row = DataFrame(repeat([fill_value], outer=(length(not_in_index_col),length(new_df)) ), names(new_df))
-            filling_row[index_col] = not_in_index_col
-            filling_row = filling_row[names(new_df)]
-            push!(new_df_cat, filling_row)
+            filling_rows = DataFrame(repeat([fill_value], outer=(length(not_in_index_col),length(new_df)) ), names(new_df))
+            filling_rows[index_col] = not_in_index_col
+            filling_rows = filling_rows[names(new_df)]
+            new_df = vcat(new_df, filling_rows)
         end
 
-        in_index_col = findin(new_df[index_col], Array(index))
-        if length(in_index_col) > 0
-            push!(new_df_cat, new_df[in_index_col, :])
+        # reorder aligned to index, first check if index_col is unique, if not takes go through every entry
+        if any(nonunique(new_df[[index_col]]))
+            order = Int64[]; for i=index append!(order , findin((new_df[index_col]), [i]) ) end
+        else
+            dict = Dict(zip(new_df[index_col], Iterators.countfrom(1)))
+            order = Int64[]; for i=index push!(order, dict[i]) end
         end
-        new_df = vcat(new_df_cat)
+        new_df[order, :]
+    else 
+        new_df
     end
-    new_df
 end
 
 

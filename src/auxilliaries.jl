@@ -1,6 +1,7 @@
 using LightGraphs
 using PyCall
 using Missings
+using DataFrames
 const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
@@ -51,68 +52,69 @@ end
 # auxilliary funcitons
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
-idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
 
 
-# try to match pandas useful reindex and set_index, note that it also allows to index from 
+# try to match pandas useful reindex with capavility of set_index, note that it also allows to index from 
 # a duplicate axis. 
-function reindex(df; index = nothing, columns = nothing, index_col=:name, fill_value=Missing)
-    new_df = df
+function reindex(df; index = nothing, columns = nothing, index_col=nothing, fill_value=missing)
+    df = copy(df)
     if columns != nothing
         columns = Symbol.(columns)        
-        
-        missing_cols = setdiff(columns, names(df))
-        if length(missing_cols)>0
-            missing_cols = DataFrame(repeat([fill_value], 
-            outer=(nrow(new_df), length(missing_cols) ) ), missing_cols)
-            new_df = hcat(new_df, missing_cols)
-        end
-        columns = Int64[] ; for col=columns append!(order , findin(names(new_df), [col]) ) end         
+        for col=setdiff(columns, names(df))  df[col] = fill_value  end
+        ordercols = Int64[]; for col=columns push!(ordercols, df.colindex[col]) end
+        columns = names(df)[ordercols]
     else
-        columns=names(new_df)
+        columns=names(df)
     end
-    in(index_col, columns) ? deleteat!(columns, findin(columns, [index_col])) : nothing
-    columns = append!([index_col], columns)        
-    new_df = new_df[columns]
 
+    # sort columns such that index_col if existent or needed is at first place
+    if index != nothing 
+        if index_col == nothing
+            index_col=:name
+        end
+        in(index_col, columns) ? deleteat!(columns, findin(columns, [index_col])) : nothing
+        columns = append!([index_col], columns)        
+    end
+    df = df[columns]
+    
     if index != nothing
-        
         # deal with nonincluded index values
-        not_in_index_col = setdiff(Array(index), new_df[index_col] )
+        not_in_index_col = setdiff(Array(index), df[index_col] )
         if length(not_in_index_col) > 0
-            filling_rows = DataFrame(repeat([fill_value], outer=(length(not_in_index_col),length(new_df)) ), names(new_df))
-            filling_rows[index_col] = not_in_index_col
-            filling_rows = filling_rows[names(new_df)]
-            new_df = vcat(new_df, filling_rows)
+            missing_rows = DataFrame( [not_in_index_col], [index_col])
+            for col=columns[2:end] missing_rows[col] = missing end
+            df = vcat(df, missing_rows)
         end
-
+        
         # reorder aligned to index, first check if index_col is unique, if not takes go through every entry
-        if any(nonunique(new_df[[index_col]]))
-            order = Int64[]; for i=index append!(order , findin((new_df[index_col]), [i]) ) end
+        if any(nonunique(df[[index_col]]))
+            warn("Indexing from a duplicated axis")
+            orderindex = Int64[]; for i=index append!(orderindex , findin((df[index_col]), [i]) ) end
         else
-            dict = Dict(zip(new_df[index_col], Iterators.countfrom(1)))
-            order = Int64[]; for i=index push!(order, dict[i]) end
+            dict = Dict(zip(df[index_col], Iterators.countfrom(1)))
+            orderindex = Int64[]; for i=index push!(orderindex, dict[i]) end
         end
-        new_df[order, :]
+       df[orderindex, :]
     else 
-        new_df
+        df
     end
 end
 
 
-function select_by(dataframe, col, selector)
-    if length(findin(dataframe[col], selector))==0
-        return dataframe[repeat(Bool[false],outer=nrow(dataframe)) , :]
-    else
-        mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
-        ids = Array{Int,1}(0)
-        for i in selector
-            push!(ids, mdict[i])
-        end
-        dataframe[ids,:]
-    end
-end
-select_names(a, b) = select_by(a, :name, b)
+
+# function select_by(dataframe, col, selector)
+#     if length(findin(dataframe[col], selector))==0
+#         return dataframe[repeat(Bool[false],outer=nrow(dataframe)) , :]
+#     else
+#         mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
+#         ids = Array{Int,1}(0)
+#         for i in selector
+#             push!(ids, mdict[i])
+#         end
+#         dataframe[ids,:]
+#     end
+# end
+# select_names(a, b) = select_by(a, :name, b)
 
 
 function append_idx_col!(dataframe)
@@ -138,7 +140,7 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
     not_included = String.(setdiff(cols, names(dense)))
     if length(not_included)>0
         attribute = Symbol.(attribute)
-        df = select_names(getfield(network, component), not_included)
+        df = reindex(getfield(network, component), index=not_included)
         df = names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
                 Symbol.(not_included))
         dense = [dense df]
@@ -175,7 +177,7 @@ function calculate_dependent_values!(network)
     end
 
     # lines
-    network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
+    network.lines[:v_nom]=reindex(network.buses, index=network.lines[:bus0])[:v_nom]
     defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
                 (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
     for (col, default) in defaults

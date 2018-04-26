@@ -164,7 +164,7 @@ function import_network(folder)
             if name == :name
                 nothing
             elseif typeof(df[name]) == Array{Union{Int64, Missings.Missing},1}
-                println("converting column $name of $component from Int to Float")
+                info("converting column $name of $component from Int to Float")
                 df[name] = float(df[name])
             end
         end

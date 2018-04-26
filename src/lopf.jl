@@ -51,8 +51,8 @@ function lopf(network, solver)
     # 1.1 set different generator types
     generators = network.generators
     fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
-    ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
-    com_gens_b = convert(BitArray, generators[:commitable])
+    ext_gens_b = BitArray(generators[:p_nom_extendable])
+    com_gens_b = BitArray(generators[:commitable])
 
     # 1.2 fix bounds for iterating
     N_fix = sum(fix_gens_b)
@@ -87,7 +87,7 @@ function lopf(network, solver)
 
 
     G = [G_fix; G_ext; G_com] # G is the concatenated variable array
-    generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:]; generators[com_gens_b,:] ] # sort generators the same
+    generators = vcat(generators[fix_gens_b,:], generators[ext_gens_b,:], generators[com_gens_b,:] ) # sort generators the same
     # new booleans
     fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
     ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
@@ -413,11 +413,13 @@ function lopf(network, solver)
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
+
         emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions]))
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
+
         @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
-                    * select_names(network.carriers, [carrier])[:co2_emissions]
+                    * reindex(network.carriers, index=[carrier])[:co2_emissions]
                     for carrier in network.carriers[:name]) .<=  co2_limit)
     end
 
@@ -450,7 +452,7 @@ function lopf(network, solver)
         generators[ext_gens_b,:p_nom_opt] = getvalue(gen_p_nom)
         network.generators = generators
         network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
-        network.generators = select_names(network.generators, orig_gen_order)
+        network.generators = reindex(network.generators, index = orig_gen_order)
 
 
         orig_line_order = network.lines[:name]
@@ -458,7 +460,7 @@ function lopf(network, solver)
         lines[:s_nom_opt] = deepcopy(lines[:s_nom])
         network.lines[ext_lines_b,:s_nom_opt] = getvalue(LN_s_nom)
         network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
-        network.lines = select_names(network.lines, orig_line_order)
+        network.lines = reindex(network.lines, index = orig_line_order)
 
         # network.buses_t["p"] =  DataFrame(ncols=nrow(network.buses))
 
@@ -468,7 +470,7 @@ function lopf(network, solver)
             links[:p_nom_opt] = deepcopy(links[:p_nom])
             network.links[ext_links_b,:p_nom_opt] = getvalue(LK_p_nom)
             network.links_t["p0"] = names!(DataFrame(transpose(getvalue(LK))), Symbol.(links[:name]))
-            network.links = select_names(network.links, orig_link_order)
+            network.links = reindex(network.links, index = orig_link_order)
 
         end
         if nrow(storage_units)>0
@@ -486,7 +488,7 @@ function lopf(network, solver)
                                 Symbol.(storage_units[:name]))
             network.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(getvalue(SU_soc))),
                                 Symbol.(storage_units[:name]))
-            network.storage_units = select_names(network.storage_units, orig_sus_order)
+            network.storage_units = reindex(network.storage_units, index = orig_sus_order)
         end
         align_component_order!(network)
         println("Reduce cost to $(m.objVal)")

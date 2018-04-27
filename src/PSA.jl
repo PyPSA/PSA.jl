@@ -166,6 +166,10 @@ function import_network(folder)
             elseif typeof(df[name]) == Array{Union{Int64, Missings.Missing},1}
                 info("converting column $name of $component from Int to Float")
                 df[name] = float(df[name])
+            # boost boolean indexing
+            elseif typeof(df[name]) == Array{Union{Bool, Missings.Missing},1}
+                info("converting column $name of $component from Bool to BitArray")
+                df[name] = BitArray(df[name])
             end
         end
     end

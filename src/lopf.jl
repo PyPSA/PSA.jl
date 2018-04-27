@@ -4,7 +4,7 @@ using JuMP
 include("auxilliaries.jl")
 
 
-function lopf(network, solver)
+function lopf(n, solver)
     # This function is organized as the following:
     # 
     # 0.        Initialize model
@@ -37,50 +37,77 @@ function lopf(network, solver)
 
     m = Model(solver=solver)
 
-    calculate_dependent_values!(network)
-    buses = network.buses
+    calculate_dependent_values!(n)
+    buses = n.buses
     reverse_busidx = rev_idx(buses)
     busidx = idx(buses)
-    N = nrow(network.buses)
-    T = nrow(network.snapshots) #normally snapshots
-    nrow(network.loads_t["p"])!=T ? network.loads_t["p"]=network.loads_t["p_set"] : nothing
+    N = nrow(n.buses)
+    T = nrow(n.snapshots) #normally snapshots
+    nrow(n.loads_t["p"])!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
 
 # --------------------------------------------------------------------------------------------------------
 
 # 1. add all generators to the model
     # 1.1 set different generator types
-    generators = network.generators
-    fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
+    generators = n.generators
+    idx_gen = idx(generators)
+    idx_gen_r = rev_idx(generators)
+
     ext_gens_b = BitArray(generators[:p_nom_extendable])
     com_gens_b = BitArray(generators[:commitable])
+    fix_gens_b = (ext_gens_b .| com_gens_b); fix_gens_b = .!fix_gens_b #two steps is faster
 
-    # 1.2 fix bounds for iterating
+
+    fix_gens_i = generators[fix_gens_b, :name]
+    ext_gens_i = generators[ext_gens_b, :name]
+    com_gens_i = generators[com_gens_b, :name]
+
+    # 1.2 fix iterating and variable bounds
     N_fix = sum(fix_gens_b)
     N_ext = sum(ext_gens_b)
     N_com = sum(com_gens_b)
 
-    p_max_pu = get_switchable_as_dense(network, "generators", "p_max_pu")
-    p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
+    p_min_pu(selector) = make_static_fallback_getter( n.generators_t["p_min_pu"],
+                    generators[:p_min_pu], Symbol.(generators[:name]), selector )
 
-   # 1.3 add generator variables to the model
+    p_max_pu(selector) = make_static_fallback_getter( n.generators_t["p_max_pu"],
+                    generators[:p_max_pu], Symbol.(generators[:name]), selector )
+
+    p_nom(selector) = generators[selector,:p_nom]
+
+    bound_fix = p_nom(fix_gens_b) 
+    lb_pu_fix = p_min_pu(fix_gens_i);  ub_pu_fix = p_max_pu(fix_gens_i) 
+    Lb_fix(t,x) =  bound_fix[x] * lb_pu_fix(t,x)
+    Ub_fix(t,x) =  bound_fix[x] * ub_pu_fix(t,x)
+    
+    Lb_nom = generators[ext_gens_b, :p_nom_min]
+    Ub_nom = generators[ext_gens_b, :p_nom_max]
+    
+    bound_com = p_nom(com_gens_b)
+    lb_pu_com = p_min_pu(com_gens_i);  ub_pu_com = p_max_pu(com_gens_i) 
+    Lb_com(t,x) =  bound_com[x] * lb_pu_com(t,x)
+    Ub_com(t,x) =  bound_com[x] * ub_pu_com(t,x)
+    
+    # 1.3 add generator variables to the model
     @variables m begin
 
-        (generators[fix_gens_b,:p_nom][gr]*p_min_pu[:,fix_gens_b][t,gr] <= G_fix[gr=1:N_fix,t=1:T]
-                                <= generators[fix_gens_b,:p_nom][gr]*p_max_pu[:,fix_gens_b][t,gr])
+        Lb_fix(t,gr) <= G_fix[gr=1:N_fix,t=1:T] <= Ub_fix(t,gr) 
 
-        G_ext[gr=1:N_ext,t = 1:T]
-        generators[ext_gens_b, :p_nom_min][gr] <=  gen_p_nom[gr=1:N_ext] <= generators[ext_gens_b,:p_nom_max][gr]
+                        G_ext[gr=1:N_ext,t = 1:T]
+        
+        Lb_nom[gr] <=  G_p_nom[gr=1:N_ext] <= Ub_nom[gr]
 
-        G_status[gr=1:N_com,t=1:T]
-        (generators[com_gens_b,:p_nom][gr].*p_min_pu[:,com_gens_b][t,gr] <= G_com[gr=1:N_com,t=1:T]
-                                <= generators[com_gens_b,:p_nom][gr]*p_max_pu[:,com_gens_b][t,gr])
+                        G_status[gr=1:N_com,t=1:T]
+
+        Lb_com(t,gr) <= G_com[gr=1:N_com,t=1:T] <= Ub_com(t,gr)
     end
 
     # 1.4 set constraints for generators
 
+
     @constraints(m, begin
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= gen_p_nom[gr]*p_min_pu[:,ext_gens_b][t,gr]
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_max_pu[:,ext_gens_b][t,gr]
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= G_p_nom[gr]*p_min_pu[:,ext_gens_b][t,gr]
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= G_p_nom[gr]*p_max_pu[:,ext_gens_b][t,gr]
 
         [gr=1:N_com,t=1:T], G_com[gr,t] - G_com[gr,t].*G_status[gr,t] == 0
     end)
@@ -121,7 +148,7 @@ function lopf(network, solver)
 
 # 2. add all lines to the model
     # 2.1 set different lines types
-    lines = network.lines
+    lines = n.lines
     fix_lines_b = (.!lines[:s_nom_extendable])
     ext_lines_b = .!fix_lines_b
 
@@ -151,7 +178,7 @@ function lopf(network, solver)
 
 # 3. add all links to the model
     # 3.1 set different link types
-    links = network.links
+    links = n.links
     fix_links_b = .!links[:p_nom_extendable]
     ext_links_b = .!fix_links_b
 
@@ -181,11 +208,11 @@ function lopf(network, solver)
 # --------------------------------------------------------------------------------------------------------
 # 4. define storage_units
     # 4.1 set different storage_units types
-    storage_units = network.storage_units
+    storage_units = n.storage_units
     fix_sus_b = .!storage_units[:p_nom_extendable]
     ext_sus_b = .!fix_sus_b
 
-    inflow = get_switchable_as_dense(network, "storage_units", "inflow")
+    inflow = get_switchable_as_dense(n, "storage_units", "inflow")
 
     # 4.2 iterator bounds
     N_fix = sum(fix_sus_b)
@@ -254,12 +281,12 @@ function lopf(network, solver)
 
 # 5. define stores
 # 5.1 set different stores types
-    stores = network.stores
+    stores = n.stores
 
     fix_stores_b = .!stores[:e_nom_extendable]
     ext_stores_b = .!fix_stores_b
 
-    inflow = get_switchable_as_dense(network, "stores", "inflow")
+    inflow = get_switchable_as_dense(n, "stores", "inflow")
 
     # 5.2 iterator bounds
     N_fix = sum(fix_stores_b)
@@ -333,7 +360,7 @@ function lopf(network, solver)
 ## 6. define nodal balance constraint
 
     #load data in correct order
-    loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+    loads = n.loads_t["p"][:,Symbol.(n.loads[:name])]
 
     @constraint(m, balance[n=1:N, t=1:T], (
           sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
@@ -342,7 +369,7 @@ function lopf(network, solver)
               .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
         + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+        - row_sum(loads[t,findin(n.loads[:bus],[reverse_busidx[n]])],1)
         - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
         - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
         - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
@@ -365,7 +392,7 @@ function lopf(network, solver)
 
     append_idx_col!(lines)
     (branches, var, attribute) = (lines, LN, :x)
-    cycles = get_cycles(network)
+    cycles = get_cycles(n)
     if ndims(cycles)<2
         cycles = [cycle for cycle in cycles if length(cycle)>2]
     else
@@ -410,17 +437,17 @@ function lopf(network, solver)
 # 8. set global_constraints
 # only for co2_emissions till now
 
-    if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
-        co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
-        nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
+    if nrow(n.global_constraints)>0 && in("primary_energy", n.global_constraints[:type])
+        co2_limit = n.global_constraints[n.global_constraints[:name].=="co2_limit", :constant]
+        nonnull_carriers = n.carriers[n.carriers[:co2_emissions].!=0, :]
 
         emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions]))
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
 
         @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
-                    * reindex(network.carriers, index=[carrier])[:co2_emissions]
-                    for carrier in network.carriers[:name]) .<=  co2_limit)
+                    * reindex(n.carriers, index=[carrier])[:co2_emissions]
+                    for carrier in n.carriers[:name]) .<=  co2_limit)
     end
 
 # --------------------------------------------------------------------------------------------------------
@@ -429,7 +456,7 @@ function lopf(network, solver)
     @objective(m, Min,
                         sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                         # consider already build infrastructur
-                        + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:]  )
+                        + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:]  )
 
                         + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
                         + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
@@ -447,50 +474,50 @@ function lopf(network, solver)
 
 # 10. extract optimisation results
     if status==:Optimal
-        orig_gen_order = network.generators[:name]
+        orig_gen_order = n.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])
-        generators[ext_gens_b,:p_nom_opt] = getvalue(gen_p_nom)
-        network.generators = generators
-        network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
-        network.generators = reindex(network.generators, index = orig_gen_order)
+        generators[ext_gens_b,:p_nom_opt] = getvalue(G_p_nom)
+        n.generators = generators
+        n.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
+        n.generators = reindex(n.generators, index = orig_gen_order)
 
 
-        orig_line_order = network.lines[:name]
-        network.lines = lines
+        orig_line_order = n.lines[:name]
+        n.lines = lines
         lines[:s_nom_opt] = deepcopy(lines[:s_nom])
-        network.lines[ext_lines_b,:s_nom_opt] = getvalue(LN_s_nom)
-        network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
-        network.lines = reindex(network.lines, index = orig_line_order)
+        n.lines[ext_lines_b,:s_nom_opt] = getvalue(LN_s_nom)
+        n.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
+        n.lines = reindex(n.lines, index = orig_line_order)
 
-        # network.buses_t["p"] =  DataFrame(ncols=nrow(network.buses))
+        # n.buses_t["p"] =  DataFrame(ncols=nrow(n.buses))
 
         if nrow(links)>0
-            orig_link_order = network.links[:name]
-            network.links = links
+            orig_link_order = n.links[:name]
+            n.links = links
             links[:p_nom_opt] = deepcopy(links[:p_nom])
-            network.links[ext_links_b,:p_nom_opt] = getvalue(LK_p_nom)
-            network.links_t["p0"] = names!(DataFrame(transpose(getvalue(LK))), Symbol.(links[:name]))
-            network.links = reindex(network.links, index = orig_link_order)
+            n.links[ext_links_b,:p_nom_opt] = getvalue(LK_p_nom)
+            n.links_t["p0"] = names!(DataFrame(transpose(getvalue(LK))), Symbol.(links[:name]))
+            n.links = reindex(n.links, index = orig_link_order)
 
         end
         if nrow(storage_units)>0
-            orig_sus_order = network.storage_units[:name]
-            network.storage_units = storage_units
+            orig_sus_order = n.storage_units[:name]
+            n.storage_units = storage_units
 
             storage_units[:p_nom_opt] = deepcopy(storage_units[:p_nom])
-            network.storage_units[ext_sus_b,:p_nom_opt] = getvalue(SU_p_nom)
-            # network.storage_units_t["spill"] = spillage
-            # network.storage_units_t["spill"][:,spill_sus_b] = names!(DataFrame(transpose(getvalue(SU_spill))),
+            n.storage_units[ext_sus_b,:p_nom_opt] = getvalue(SU_p_nom)
+            # n.storage_units_t["spill"] = spillage
+            # n.storage_units_t["spill"][:,spill_sus_b] = names!(DataFrame(transpose(getvalue(SU_spill))),
             #                     names(spillage)[spill_sus_b])
-            network.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),
+            n.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),
                                 Symbol.(storage_units[:name]))
-            network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(SU_dispatch .- SU_store))),
+            n.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(SU_dispatch .- SU_store))),
                                 Symbol.(storage_units[:name]))
-            network.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(getvalue(SU_soc))),
+            n.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(getvalue(SU_soc))),
                                 Symbol.(storage_units[:name]))
-            network.storage_units = reindex(network.storage_units, index = orig_sus_order)
+            n.storage_units = reindex(n.storage_units, index = orig_sus_order)
         end
-        align_component_order!(network)
+        align_component_order!(n)
         println("Reduce cost to $(m.objVal)")
     end
     return m

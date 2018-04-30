@@ -102,6 +102,30 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
 end
 
 
+"""Returns a function which selects time dependent variables either
+from the series network.component_t or from static valuenetwork.component"""
+function select_time_dep(network, component, attribute; components=0)
+
+    component_t = Symbol(component * "_t")
+    component = Symbol(component)
+    attribute_s = Symbol(attribute)
+
+    df = getfield(network, component_t)[attribute]
+
+    if components==0
+        c_names = Symbol.(getfield(network, component)[:,:name])
+        s = getfield(network, component)[:,attribute_s]
+    else
+        c_names = Symbol.(getfield(network, component)[components,:name])
+        s = getfield(network, component)[components,attribute_s]
+    end
+
+    df_names = names(df)
+
+    return (t,i) -> in(c_names[i], df_names) ? df[t, c_names[i]] : s[i]
+end
+
+
 function calculate_dependent_values!(network)
     function set_default(dataframe, col, default)
         !in(col, names(dataframe)) ? dataframe[col] = default : nothing

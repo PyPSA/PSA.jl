@@ -6,13 +6,13 @@ include("auxilliaries.jl")
 
 function lopf(network, solver)
     # This function is organized as the following:
-    # 
+    #
     # 0.        Initialize model
     # 1. - 5.   add generators,  lines, links, storage_units,
     #           stores to the model:
     #               .1 separate different types from each other
     #               .2 define number of different types
-    #               .3 add variables to the model 
+    #               .3 add variables to the model
     #               .4 set contraints for extendables
     #               .5 set charging constraints (storage_units and stores)
     # 6.        set Kirchhoff's Current Law (nodal balance)
@@ -20,12 +20,12 @@ function lopf(network, solver)
     # 8.        set global constraints
     # 9.        objective function and solving
     # 10.       extract results
-    
-    # Conventions: 
-    #   - all variable names start with capital letters 
+
+    # Conventions:
+    #   - all variable names start with capital letters
     #   - Additional capital words are N (number of buses), T (number of snapshots)
     #       and N_* defining the nuber of considered variables added to the model.
-    
+
     #solver is e.g.
 
     #using Gurobi
@@ -59,31 +59,36 @@ function lopf(network, solver)
     N_ext = sum(ext_gens_b)
     N_com = sum(com_gens_b)
 
+    if N_com > 0
+        println("WARNING, no unit commitment yet")
+    end
+
+
     p_max_pu = get_switchable_as_dense(network, "generators", "p_max_pu")
     p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
 
-   # 1.3 add generator variables to the model
-    @variables m begin
+    # 1.3a add non-extendable generator variables to the model
+    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=fix_gens_b)
+    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)
+    p_nom = network.generators[fix_gens_b,:p_nom]
 
-        (generators[fix_gens_b,:p_nom][gr]*p_min_pu[:,fix_gens_b][t,gr] <= G_fix[gr=1:N_fix,t=1:T]
-                                <= generators[fix_gens_b,:p_nom][gr]*p_max_pu[:,fix_gens_b][t,gr])
+    @variable m p_nom[gr]*p_min_pu(t,gr) <= G_fix[gr=1:N_fix,t=1:T] <= p_nom[gr]*p_max_pu(t,gr)
 
-        G_ext[gr=1:N_ext,t = 1:T]
-        generators[ext_gens_b, :p_nom_min][gr] <=  gen_p_nom[gr=1:N_ext] <= generators[ext_gens_b,:p_nom_max][gr]
 
-        G_status[gr=1:N_com,t=1:T]
-        (generators[com_gens_b,:p_nom][gr].*p_min_pu[:,com_gens_b][t,gr] <= G_com[gr=1:N_com,t=1:T]
-                                <= generators[com_gens_b,:p_nom][gr]*p_max_pu[:,com_gens_b][t,gr])
+    # 1.3a add extendable generator variables to the model
+    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
+    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
+    p_nom_min = network.generators[ext_gens_b,:p_nom_min]
+    p_nom_max = network.generators[ext_gens_b,:p_nom_max]
+
+    @variable m G_ext[gr=1:N_ext,t = 1:T]
+
+    @variable m p_nom_max[gr] <=  gen_p_nom[gr=1:N_ext] <= p_nom_max[gr]
+
+    @constraints m begin
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= gen_p_nom[gr]*p_min_pu(t,gr)
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_min_pu(t,gr)
     end
-
-    # 1.4 set constraints for generators
-
-    @constraints(m, begin
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= gen_p_nom[gr]*p_min_pu[:,ext_gens_b][t,gr]
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_max_pu[:,ext_gens_b][t,gr]
-
-        [gr=1:N_com,t=1:T], G_com[gr,t] - G_com[gr,t].*G_status[gr,t] == 0
-    end)
 
 
     G = [G_fix; G_ext; G_com] # G is the concatenated variable array
@@ -93,28 +98,6 @@ function lopf(network, solver)
     ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
     com_gens_b = convert(BitArray, generators[:commitable])
 
-# commitable still to work on:
-    # append_idx_col!(generators)
-    # g_up_time_b = generators[(com_gens_b .& generators[:min_up_time].>0), :idx]
-    # g_down_time_b = generators[(com_gens_b .& generators[:min_down_time].>0), :idx]
-
-    # @constraints(m, begin
-        # [gr=N_com,t=1], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_up_time]-1,T))
-        #                     >=
-        #                     # generators_com[gr,:min_up_time].*G_status[gr,t]
-        #                     generators_com[gr,:min_up_time].*generators_com[gr, :initial_status])
-        # [gr=N_com,t=2:T], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_up_time]-1,T))
-        #                     >= generators_com[gr,:min_up_time].*G_status[gr,t]
-        #                     - generators_com[gr,:min_up_time].*G_status[gr,t-1])
-        #
-        # [gr=N_com,t=1], (generators_com[gr,:min_down_time]
-        #                     - sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_down_time]-1,T))
-        #                     >= (- generators_com[gr,:min_down_time].*G_status[gr,t]
-        #                     + generators_com[gr,:min_down_time].*generators_com[gr, :initial_status]))
-        # [gr=N_com,t=2:T], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_down_time]-1,T))
-        #                     >= - generators_com[gr,:min_down_time].*G_status[gr,t]
-        #                     + generators_com[gr,:min_down_time].*G_status[gr,t-1])
-    # end)
 
 
 # --------------------------------------------------------------------------------------------------------

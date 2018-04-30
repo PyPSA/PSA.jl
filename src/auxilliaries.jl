@@ -52,6 +52,9 @@ end
 # auxilliary funcitons
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
+idx_sym(dataframe) = Dict(zip(Symbol.(dataframe[:name]), Iterators.countfrom(1)))
+rev_idx_sym(dataframe) = Dict(zip(Iterators.countfrom(1), Symbol.(dataframe[:name])))
+
 
 
 # try to match pandas useful reindex with capavility of set_index, note that it also allows to index from 
@@ -101,20 +104,12 @@ function reindex(df; index = nothing, columns = nothing, index_col=nothing, fill
 end
 
 
-
-# function select_by(dataframe, col, selector)
-#     if length(findin(dataframe[col], selector))==0
-#         return dataframe[repeat(Bool[false],outer=nrow(dataframe)) , :]
-#     else
-#         mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
-#         ids = Array{Int,1}(0)
-#         for i in selector
-#             push!(ids, mdict[i])
-#         end
-#         dataframe[ids,:]
-#     end
-# end
-# select_names(a, b) = select_by(a, :name, b)
+function get_rows_of(df, names, index_col=:name)
+    dict = Dict(zip(df[index_col], Iterators.countfrom(1)))
+    positions = []
+    for i=names push!(positions,getindex(idx_gen, i)) end 
+    positions
+end
 
 
 function append_idx_col!(dataframe)
@@ -127,30 +122,39 @@ function append_idx_col!(dataframe)
     end
 end
 
-function get_switchable_as_dense(network, component, attribute, snapshots=0)
-    snapshots==0 ? snapshots = network.snapshots : nothing
+
+function get_switchable_as_dense(n, component, attribute, snapshots=0)
+    snapshots==0 ? snapshots = n.snapshots : nothing
     T = nrow(snapshots)
     component_t = Symbol(component * "_t")
     component = Symbol(component)
-    dense = DataFrame()
-    if in(attribute, keys(getfield(network, component_t)))
-        dense = getfield(network, component_t)[attribute]
+    if in(attribute, keys(getfield(n, component_t)))
+        dense = copy(getfield(n, component_t)[attribute])
+    else
+        dense = DataFrame()
     end
-    cols = Symbol.(getfield(network, component)[:name])
-    not_included = String.(setdiff(cols, names(dense)))
-    if length(not_included)>0
-        attribute = Symbol.(attribute)
-        df = reindex(getfield(network, component), index=not_included)
-        df = names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
-                Symbol.(not_included))
-        dense = [dense df]
+    static_value = getfield(n, component)[Symbol(attribute)]
+    static_names = getfield(n, component)[:name]
+    static_index = idx(getfield(n, component))
+    static_fallbacks = setdiff(static_names, string.(names(dense)))
+    for col in static_fallbacks
+        dense[Symbol(col)] = static_value[static_index[col]] 
     end
-    return dense[cols]
+    dense[Symbol.(static_names)]
 end
 
 
-function make_fallback_getter(df)
-    def = 1.
+function make_static_fallback_getter(df, stat_df, smblnames, selector=nothing)
+    if selector == nothing
+        (t,x)-> in(smblnames[x], names(df)) ? df[t, smblnames[x]] : stat_df[x]
+    else
+        selector = find(selector)
+        (t,x)-> (in(smblnames[selector[x]], names(df)) ? 
+                df[t, smblnames[selector[x]]] : stat_df[selector[x]] )
+    end
+end
+
+function make_fallback_getter(df, def=1)
     (t,x)->in(x, names(df)) ? df[t, x] : def
 end
 

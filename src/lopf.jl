@@ -58,36 +58,46 @@ function lopf(n, solver)
     fix_gens_b = (ext_gens_b .| com_gens_b); fix_gens_b = .!fix_gens_b #two steps is faster
 
 
-    fix_gens_i = generators[fix_gens_b, :name]
-    ext_gens_i = generators[ext_gens_b, :name]
-    com_gens_i = generators[com_gens_b, :name]
+        # fix_gens_i = generators[fix_gens_b, :name]
+        # ext_gens_i = generators[ext_gens_b, :name]
+        # com_gens_i = generators[com_gens_b, :name]
 
     # 1.2 fix iterating and variable bounds
     N_fix = sum(fix_gens_b)
     N_ext = sum(ext_gens_b)
     N_com = sum(com_gens_b)
 
-    p_min_pu(selector) = make_static_fallback_getter( n.generators_t["p_min_pu"],
-                    generators[:p_min_pu], Symbol.(generators[:name]), selector )
+        # This seems not be very sufficient -> go back to get_switchable_as_dense preliminary
+        # p_min_pu(selector) = make_static_fallback_getter( n.generators_t["p_min_pu"],
+        #                 generators[:p_min_pu], Symbol.(generators[:name]), selector )
 
-    p_max_pu(selector) = make_static_fallback_getter( n.generators_t["p_max_pu"],
-                    generators[:p_max_pu], Symbol.(generators[:name]), selector )
+        # p_max_pu(selector) = make_static_fallback_getter( n.generators_t["p_max_pu"],
+        #                 generators[:p_max_pu], Symbol.(generators[:name]), selector )
 
-    p_nom(selector) = generators[selector,:p_nom]
+        # p_nom(selector) = generators[selector,:p_nom]
 
-    bound_fix = p_nom(fix_gens_b) 
-    lb_pu_fix = p_min_pu(fix_gens_i);  ub_pu_fix = p_max_pu(fix_gens_i) 
-    Lb_fix(t,x) =  bound_fix[x] * lb_pu_fix(t,x)
-    Ub_fix(t,x) =  bound_fix[x] * ub_pu_fix(t,x)
+        # bound_fix = p_nom(fix_gens_b) 
+        # lb_pu_fix = p_min_pu(fix_gens_i);  ub_pu_fix = p_max_pu(fix_gens_i) 
+        # Lb_fix(t,x) =  bound_fix[x] * lb_pu_fix(t,x)
+        # Ub_fix(t,x) =  bound_fix[x] * ub_pu_fix(t,x)
+        
+        # Lb_nom = generators[ext_gens_b, :p_nom_min]
+        # Ub_nom = generators[ext_gens_b, :p_nom_max]
+        
+        # bound_com = p_nom(com_gens_b)
+        # lb_pu_com = p_min_pu(com_gens_i);  ub_pu_com = p_max_pu(com_gens_i) 
+        # Lb_com(t,x) =  bound_com[x] * lb_pu_com(t,x)
+        # Ub_com(t,x) =  bound_com[x] * ub_pu_com(t,x)
+
+    p_max_pu = Array{Float64}(get_switchable_as_dense(n, "generators", "p_max_pu"))
+    p_min_pu = get_switchable_as_dense(n, "generators", "p_min_pu")
+        
+    p_nom = float.(generators[fix_gens_b, :p_nom])
+
+    Ub_fix = broadcast(*, p_max_pu[:,fix_gens_b], p_nom[fix_gens_b]')
+    Lb_fix = broadcast(*, p_min_pu[:,fix_gens_b], p_nom[fix_gens_b]')
     
-    Lb_nom = generators[ext_gens_b, :p_nom_min]
-    Ub_nom = generators[ext_gens_b, :p_nom_max]
-    
-    bound_com = p_nom(com_gens_b)
-    lb_pu_com = p_min_pu(com_gens_i);  ub_pu_com = p_max_pu(com_gens_i) 
-    Lb_com(t,x) =  bound_com[x] * lb_pu_com(t,x)
-    Ub_com(t,x) =  bound_com[x] * ub_pu_com(t,x)
-    
+
     # 1.3 add generator variables to the model
     @variables m begin
 

@@ -38,12 +38,13 @@ function lopf(n, solver)
     m = Model(solver=solver)
 
     calculate_dependent_values!(n)
-    buses = n.buses
-    reverse_busidx = rev_idx(buses)
-    busidx = idx(buses)
-    N = nrow(n.buses)
-    T = nrow(n.snapshots) #normally snapshots
-    nrow(n.loads_t["p"])!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
+    buses = n.buses.axes[1].val
+    # reverse_busidx = rev_idx(buses)
+    # busidx = idx(buses)
+    N, = size(n.buses)
+    T, = size(n.snapshots) #normally snapshots
+
+    size(n.loads_t["p"])[1]!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -53,8 +54,8 @@ function lopf(n, solver)
     idx_gen = idx(generators)
     idx_gen_r = rev_idx(generators)
 
-    ext_gens_b = BitArray(generators[:p_nom_extendable])
-    com_gens_b = BitArray(generators[:commitable])
+    ext_gens_b = BitArray(n.generators[:, "p_nom_extendable"])
+    com_gens_b = BitArray(n.generators[:, "commitable"])
     fix_gens_b = (ext_gens_b .| com_gens_b); fix_gens_b = .!fix_gens_b #two steps is faster
 
 
@@ -89,35 +90,42 @@ function lopf(n, solver)
         # Lb_com(t,x) =  bound_com[x] * lb_pu_com(t,x)
         # Ub_com(t,x) =  bound_com[x] * ub_pu_com(t,x)
 
-    p_max_pu = Array{Float64}(get_switchable_as_dense(n, "generators", "p_max_pu"))
+    p_max_pu = get_switchable_as_dense(n, "generators", "p_max_pu")
     p_min_pu = get_switchable_as_dense(n, "generators", "p_min_pu")
         
-    p_nom = float.(generators[fix_gens_b, :p_nom])
+    p_nom = float.(n.generators[fix_gens_b, "p_nom"])
 
     Ub_fix = broadcast(*, p_max_pu[:,fix_gens_b], p_nom[fix_gens_b]')
     Lb_fix = broadcast(*, p_min_pu[:,fix_gens_b], p_nom[fix_gens_b]')
     
+    Ub_com = broadcast(*, p_max_pu[:,com_gens_b], p_nom[com_gens_b]')
+    Lb_com = broadcast(*, p_min_pu[:,com_gens_b], p_nom[com_gens_b]')
+
+    Ub_ext_nom = n.generators[ext_gens_b, "p_nom_max"]
+    Lb_ext_nom = n.generators[ext_gens_b, "p_nom_min"]
 
     # 1.3 add generator variables to the model
     @variables m begin
 
-        Lb_fix(t,gr) <= G_fix[gr=1:N_fix,t=1:T] <= Ub_fix(t,gr) 
+        Lb_fix[t,gr] <= G_fix[gr=1:N_fix,t=1:T] <= Ub_fix[t,gr] 
 
                         G_ext[gr=1:N_ext,t = 1:T]
         
-        Lb_nom[gr] <=  G_p_nom[gr=1:N_ext] <= Ub_nom[gr]
+        Lb_ext_nom[gr] <=  G_p_nom[gr=1:N_ext] <= Ub_ext_nom[gr]
 
                         G_status[gr=1:N_com,t=1:T]
 
-        Lb_com(t,gr) <= G_com[gr=1:N_com,t=1:T] <= Ub_com(t,gr)
+        Lb_com[t,gr] <= G_com[gr=1:N_com,t=1:T] <= Ub_com[t,gr]
     end
-
+    
     # 1.4 set constraints for generators
 
+    Ub_ext = broadcast(*, p_max_pu[:,ext_gens_b], G_p_nom');
+    Lb_ext = broadcast(*, p_min_pu[:,ext_gens_b], G_p_nom');   
 
     @constraints(m, begin
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= G_p_nom[gr]*p_min_pu[:,ext_gens_b][t,gr]
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= G_p_nom[gr]*p_max_pu[:,ext_gens_b][t,gr]
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= Lb_ext[t,gr]
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= Ub_ext[t,gr]
 
         [gr=1:N_com,t=1:T], G_com[gr,t] - G_com[gr,t].*G_status[gr,t] == 0
     end)

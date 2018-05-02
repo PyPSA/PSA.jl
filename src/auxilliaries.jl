@@ -6,8 +6,8 @@ const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
 
-function dynamic_components(network)
-    fields = String.(fieldnames(network))
+function dynamic_components(n)
+    fields = String.(fieldnames(n))
     components = []; 
     for field=fields 
         field[end-1:end] == "_t" ? push!(components, field) : nothing  
@@ -15,8 +15,8 @@ function dynamic_components(network)
     Symbol.(components)
 end
 
-function static_components(network)
-    fields = String.(fieldnames(network))
+function static_components(n)
+    fields = String.(fieldnames(n))
     components = []
     for field=fields
         field[end-1:end] != "_t" ? push!(components, field) : nothing
@@ -24,42 +24,220 @@ function static_components(network)
     Symbol.(components)
 end
 
-function set_snapshots!(network, snapshots)
-    for field=dynamic_components(network)
-        for df_name=keys(getfield(network,field))
-            if nrow(getfield(network,field)[df_name])>0
-                getfield(network,field)[df_name] = getfield(network,field)[df_name][snapshots, :]
+
+function set_snapshots!(n, snapshots)
+    assert(typeof(snapshots) == Array{DateTime,1})
+    first_sn, last_sn = snapshots[[1, end]]
+    for field=dynamic_components(n)
+        for df_name=keys(getfield(n,field))
+            if size(getfield(n,field)[df_name])[1]>0
+                getfield(n,field)[df_name] = getfield(n,field)[df_name][first_sn .. last_sn, :]
             end
         end
     end
-    network.snapshots = network.snapshots[snapshots,:]
+    n.snapshots = snapshots
 end
 
 
-function align_component_order!(network)
-    # align the column order of dynamic_component (e.g generators_t{["p_max_pu"]) with row order of 
-    # static component (generators[:name])
-    for comp = dynamic_components(network)
-        order = Symbol.(getfield(network, Symbol(String(comp)[1:end-2]))[:name])
-        for attr in keys(getfield(network, comp))
-            if length(getfield(network,comp)[attr])==length(order)
-                getfield(network,comp)[attr]= getfield(network,comp)[attr][:, order]
+# align the column order of dynamic_component (e.g generators_t{["p_max_pu"]) with row order of 
+# static component (generators[:name])
+function align_component_order!(n)
+    for comp = dynamic_components(n)
+        order = getfield(n, Symbol(String(comp)[1:end-2])).axes[1]
+        for attr in keys(getfield(n, comp))
+            if ndims(getfield(n,comp)[attr]) > 1
+                if size(getfield(n,comp)[attr])[2]== length(order) != 0
+                    getfield(n,comp)[attr]= reindex(getfield(n,comp)[attr], columns = order)
+                end
             end
         end
     end
 end
 
-# auxilliary funcitons
+
+function calculate_dependent_values!(n)
+    function set_default(df, col, default)
+        col = String(col)
+        !in(col, df.axes[1].val) ? assign(df, fill(default, size(df)[1]), col) : nothing
+    end
+
+    #buses
+    defaults = [(:v_nom, 1.)]
+    for (col, default) in defaults
+        n.buses = set_default(n.buses, col, default)
+    end
+
+    # generators
+    defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
+                (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
+                (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
+                (:p_nom, 0.),(:marginal_cost, 0),(:p_nom_opt, 0.)]
+    for (col, default) in defaults
+        n.generators = set_default(n.generators, col, default)
+    end
+
+    # lines
+    # map the bus v_nom to lines bus0
+    vnom = []; for bus=string.(n.lines[:,"bus0"]) push!(vnom, n.buses[bus, "v_nom"]) end    
+    n.lines = assign(n.lines, vnom, "v_nom")
+
+    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
+                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
+    for (col, default) in defaults
+        n.lines = set_default(n.lines, col, default)
+    end
+    n.lines = assign(n.lines, float.(n.lines[:,"x"])./float.((n.lines[:,"v_nom"]).^2), "x_pu")
+    n.lines = assign(n.lines, float.(n.lines[:,"r"])./float.(n.lines[:,"v_nom"]).^2, "r_pu")
+    n.lines = assign(n.lines, float.(n.lines[:,"b"]).*float.(n.lines[:,"v_nom"]).^2,   "b_pu")
+    n.lines = assign(n.lines, float.(n.lines[:,"g"]).*float.(n.lines[:,"v_nom"]).^2,   "g_pu")
+
+    # links
+    defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
+                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
+                (:marginal_cost, 0), (:p_nom, 0.), (:efficiency, 1)]
+    for (col, default) in defaults
+        n.links = set_default(n.links, col, default)
+    end
+
+    # storage_units
+    defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
+                (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
+                (:cyclic_state_of_charge, false),
+                (:state_of_charge_initial, 0.), (:p_nom, 0.),
+                (:efficiency_dispatch, 1), (:inflow, 0)]
+    for (col, default) in defaults
+        n.storage_units = set_default(n.storage_units, col, default)
+    end
+
+    # stores
+    defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
+                    (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
+                    (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.)]
+    for (col, default) in defaults
+        n.stores = set_default(n.stores, col, default)
+    end
+
+    # loads_t
+    # could be directly done with assign
+    for df_name=keys(n.loads_t)
+        if size(n.loads_t[df_name])[1]>1
+            for bus=n.loads.axes[1].val 
+                if !in(bus, n.loads_t[df_name].axes[2].val)
+                    n.loads_t[df_name] = set_default(n.loads_t[df_name], bus, 0)
+                end
+            end
+        end
+    end
+    align_component_order!(n)
+end
+
+
+function get_switchable_as_dense(n, component, attribute, snapshots=0)
+    snapshots==0 ? snapshots = n.snapshots : nothing
+    T, = size(snapshots)
+    component_t = Symbol(component * "_t")
+    component = Symbol(component)
+    dense = getfield(n, component_t)[attribute]
+    if size(dense)[1] > 0
+        static_value = getfield(n, component)[:,attribute]
+        missing_cols = setdiff(static_value.axes[1].val, dense.axes[2].val)
+        dense = assign(dense, repmat(float.(static_value[missing_cols].data)', T), missing_cols )
+        reindex(dense, columnus=static_value.axes[1])
+    else
+        static_value = getfield(n, component)[:,attribute]
+        AxisArray(repmat(float.(static_value.data)', T), Axis{:snapshots}(n.snapshots), static_value.axes[1])
+    end
+end
+
+
+function make_static_fallback_getter(df, static, selector=nothing)
+    selector == nothing ? (selector = :) : nothing
+    fullindex = static.axes[1].val[selector]
+    static = static.data[selector]
+    dynindex = df.axes[2].val
+    (t,x)-> in(fullindex[x], dynindex) ? df[t, fullindex[x]] : static[x] 
+    # end
+end
+
+function make_fallback_getter(df, def=1)
+    (t,x)->in(x, names(df)) ? df[t, x] : def
+end
+
+
+
+# -------------------------------------------------------------------------------------------------
+# AxisArray functions
+
+# Use this funtion to assign a new (set of) column(s) or row(s) with given values.
+function assign(df::AxisArray, values, index; axis=1)
+    # This could also be done with AxisArrays.merge which breaks however with type 
+    # Any.  
+    in(typeof(index),[String, Symbol, DateTime]) ? index = [index] : nothing
+    if axis == 1
+        AxisArray([df.data values], 
+                    axes(df)[1], 
+                    Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
+    elseif axis==2
+        AxisArray([df.data; values'], 
+                    Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index...)),  
+                    axes(df)[2])
+    end
+end
+
+# This does not work yet. 
+# function assign!(df::AxisArray, values, index; axis=1)
+#     in(typeof(index),[String, Symbol, DateTime]) ? index = [index] : nothing
+#     if axis == 1
+#         df = AxisArray([df values], 
+#                     axes(df)[1], 
+#                     Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
+#     elseif axis==2
+#         df = AxisArray([df; values'], 
+#                     Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index...)),  
+#                     axes(df)[2])
+#     end
+# end
+
+
+# use this function to reorder, AxisArrays does not support this 
+function reindex(df::AxisArray; index=nothing, columns=nothing)
+
+    if index == nothing
+        (newindex = :)
+    else
+        typeof(index) <: AxisArrays.Axis ? index = index.val : nothing 
+        indexdict = Dict(zip(df.axes[1].val, Iterators.countfrom(1)))
+        newindex = Int[]
+        for i=index push!(newindex, getindex(indexdict, i)) end 
+    end
+
+    if columns == nothing
+        (newcol = :)
+    else
+        typeof(columns) <: AxisArrays.Axis ? columns = columns.val : nothing 
+        coldict = Dict(zip(df.axes[2].val, Iterators.countfrom(1)))
+        newcol = Int[]
+        for i=columns push!(newcol, getindex(coldict, i)) end 
+    end
+
+    df[newindex, newcol]
+end
+
+
+
+# --------------------------------------------------------------------------------------------------
+# DataFrames functions
+
+
+# auxilliaries
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_sym(dataframe) = Dict(zip(Symbol.(dataframe[:name]), Iterators.countfrom(1)))
 rev_idx_sym(dataframe) = Dict(zip(Iterators.countfrom(1), Symbol.(dataframe[:name])))
 
-
-
 # try to match pandas useful reindex with capavility of set_index, note that it also allows to index from 
 # a duplicate axis. 
-function reindex(df; index = nothing, columns = nothing, index_col=nothing, fill_value=missing)
+function reindex(df::DataFrame; index = nothing, columns = nothing, index_col=nothing, fill_value=missing)
     df = copy(df)
     if columns != nothing
         columns = Symbol.(columns)        
@@ -104,7 +282,7 @@ function reindex(df; index = nothing, columns = nothing, index_col=nothing, fill
 end
 
 
-function get_rows_of(df, names, index_col=:name)
+function get_rows_of(df::DataFrame, names, index_col=:name)
     dict = Dict(zip(df[index_col], Iterators.countfrom(1)))
     positions = []
     for i=names push!(positions,getindex(idx_gen, i)) end 
@@ -112,147 +290,35 @@ function get_rows_of(df, names, index_col=:name)
 end
 
 
-function append_idx_col!(dataframe)
-    if typeof(dataframe)==Vector{DataFrames.DataFrame}
-        for df in dataframe
+function append_idx_col!(df::DataFrame)
+    if typeof(df)==Vector{DataFrames.DataFrame}
+        for df in df
             df[:idx] = collect(1:nrow(df))
         end
     else
-        dataframe[:idx] = collect(1:nrow(dataframe))
+        df[:idx] = collect(1:nrow(df))
     end
 end
 
+# -----------------------------------------------------------------------------------------------
+# graph analysis
 
-function get_switchable_as_dense(n, component, attribute, snapshots=0)
-    snapshots==0 ? snapshots = n.snapshots : nothing
-    T = nrow(snapshots)
-    component_t = Symbol(component * "_t")
-    component = Symbol(component)
-    if in(attribute, keys(getfield(n, component_t)))
-        dense = copy(getfield(n, component_t)[attribute])
-    else
-        dense = DataFrame()
-    end
-    static_value = getfield(n, component)[Symbol(attribute)]
-    static_names = getfield(n, component)[:name]
-    static_index = idx(getfield(n, component))
-    static_fallbacks = setdiff(static_names, string.(names(dense)))
-    for col in static_fallbacks
-        dense[Symbol(col)] = static_value[static_index[col]] 
-    end
-    dense[Symbol.(static_names)]
-end
-
-
-function make_static_fallback_getter(df, stat_df, smblnames, selector=nothing)
-    if selector == nothing
-        (t,x)-> in(smblnames[x], names(df)) ? df[t, smblnames[x]] : stat_df[x]
-    else
-        selector = find(selector)
-        (t,x)-> (in(smblnames[selector[x]], names(df)) ? 
-                df[t, smblnames[selector[x]]] : stat_df[selector[x]] )
-    end
-end
-
-function make_fallback_getter(df, def=1)
-    (t,x)->in(x, names(df)) ? df[t, x] : def
-end
-
-
-
-function calculate_dependent_values!(network)
-    function set_default(dataframe, col, default)
-        !in(col, names(dataframe)) ? dataframe[col] = default : nothing
-    end
-
-    #buses
-    defaults = [(:v_nom, 1.)]
-    for (col, default) in defaults
-        set_default(network.buses, col, default)
-    end
-
-    # generators
-    defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
-                (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
-                (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
-                (:p_nom, 0.),(:marginal_cost, 0),(:p_nom_opt, 0.)]
-    for (col, default) in defaults
-        set_default(network.generators, col, default)
-    end
-
-    # lines
-    network.lines[:v_nom]=reindex(network.buses, index=network.lines[:bus0])[:v_nom]
-    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
-    for (col, default) in defaults
-        set_default(network.lines, col, default)
-    end
-    network.lines[:x_pu] = network.lines[:x]./(network.lines[:v_nom].^2)
-    network.lines[:r_pu] = network.lines[:r]./(network.lines[:v_nom].^2)
-    network.lines[:b_pu] = network.lines[:b].*network.lines[:v_nom].^2
-    network.lines[:g_pu] = network.lines[:g].*network.lines[:v_nom].^2
-
-    # links
-    defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
-                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
-                (:marginal_cost, 0), (:p_nom, 0.), (:efficiency, 1)]
-    for (col, default) in defaults
-        set_default(network.links, col, default)
-    end
-
-    # storage_units
-    defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
-                (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                (:cyclic_state_of_charge, false),
-                (:state_of_charge_initial, 0.), (:p_nom, 0.),
-                (:efficiency_dispatch, 1), (:inflow, 0)]
-    for (col, default) in defaults
-        set_default(network.storage_units, col, default)
-    end
-
-    # stores
-    defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
-                    (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                    (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.)]
-    for (col, default) in defaults
-        set_default(network.stores, col, default)
-    end
-
-    # loads_t
-    for df_name=keys(network.loads_t)
-        if nrow(network.loads_t[df_name])>1
-            for bus=[bus for bus in network.loads[:name] if
-                !in(Symbol(bus), names(network.loads_t[df_name]))]
-                set_default(network.loads_t[df_name], bus, 0)
-            end
-        end
-    end
-end
-
-function to_graph(network)
-    busidx = idx(network.buses)
+function to_graph(n)
+    busidx = idx(n.buses)
     g = DiGraph(length(busidx))
-    for l in eachrow(network.lines)
+    for l in eachrow(n.lines)
         add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
     end
-    for l in eachrow(network.links)
+    for l in eachrow(n.links)
         add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
     end
     return g
 end
 
-# function to_graphx(network)
-#     busidx = idx(network.buses)
-#     g = networkx[:Graph]()
-#     g[:add_nodes_from](busidx)
-#     g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
-#     return g
-# end
-
-function incidence_matrix(network)
-    busidx = idx(network.buses)
-    lines = network.lines
-    K = zeros(nrow(network.buses),nrow(lines))
+function incidence_matrix(n)
+    busidx = idx(n.buses)
+    lines = n.lines
+    K = zeros(nrow(n.buses),nrow(lines))
     for l in 1:size(K)[2]
         K[busidx[lines[l,:bus0]],l] = 1
         K[busidx[lines[l,:bus1]],l] = -1
@@ -260,30 +326,22 @@ function incidence_matrix(network)
     return K
 end
 
-function laplace_matrix(network)
-    K = incidence_matrix(network)
+function laplace_matrix(n)
+    K = incidence_matrix(n)
     return K*K'
 end
 
-function ptdf_matrix(network)
-    K = incidence_matrix(network)
+function ptdf_matrix(n)
+    K = incidence_matrix(n)
     H = K' * pinv(K*K')
     return H .- H[:,1]
 end
 
-function get_cycles(network)
-    busidx = idx(network.buses)
-    g = networkx[:Graph]()
+function get_cycles(n)
+    busidx = idx(n.buses)
+    g = nx[:Graph]()
     g[:add_nodes_from](busidx)
-    g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
+    g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(n.lines)])
     networkx[:cycle_basis](g)
 end
 
-
-function row_sum(df, row_id)
-    if length(df[row_id,:]) == 0
-        return 0.
-    else
-        return sum([df[row_id,i] for i in 1:length(df[row_id,:])])
-    end
-end

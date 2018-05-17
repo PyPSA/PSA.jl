@@ -58,7 +58,7 @@ end
 function calculate_dependent_values!(n)
     function set_default(df, col, default)
         col = String(col)
-        !in(col, df.axes[1].val) ? assign(df, fill(default, size(df)[1]), col) : nothing
+        !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1]),1), col) : df
     end
 
     #buses
@@ -71,7 +71,7 @@ function calculate_dependent_values!(n)
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
                 (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
                 (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
-                (:p_nom, 0.),(:marginal_cost, 0),(:p_nom_opt, 0.)]
+                (:p_nom, 0.),(:marginal_cost, 0),(:p_nom_opt, 0.), (:efficiency, 1.)]
     for (col, default) in defaults
         n.generators = set_default(n.generators, col, default)
     end
@@ -82,7 +82,7 @@ function calculate_dependent_values!(n)
     n.lines = assign(n.lines, vnom, "v_nom")
 
     defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
+                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_opt, 0.)]
     for (col, default) in defaults
         n.lines = set_default(n.lines, col, default)
     end
@@ -94,7 +94,7 @@ function calculate_dependent_values!(n)
     # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
                 (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
-                (:marginal_cost, 0), (:p_nom, 0.), (:efficiency, 1)]
+                (:marginal_cost, 0), (:p_nom, 0.), (:efficiency, 1), (:p_nom_opt, 0.)]
     for (col, default) in defaults
         n.links = set_default(n.links, col, default)
     end
@@ -102,9 +102,9 @@ function calculate_dependent_values!(n)
     # storage_units
     defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
                 (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                (:cyclic_state_of_charge, false),
+                (:cyclic_state_of_charge, false), (:p_nom_extendable, false),
                 (:state_of_charge_initial, 0.), (:p_nom, 0.),
-                (:efficiency_dispatch, 1), (:inflow, 0)]
+                (:efficiency_dispatch, 1), (:inflow, 0), (:p_nom_opt, 0.)]
     for (col, default) in defaults
         n.storage_units = set_default(n.storage_units, col, default)
     end
@@ -112,7 +112,8 @@ function calculate_dependent_values!(n)
     # stores
     defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
                     (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                    (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.)]
+                    (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.), (:e_nom_opt, 0.), 
+                    (:max_hours, 0)]
     for (col, default) in defaults
         n.stores = set_default(n.stores, col, default)
     end
@@ -142,7 +143,7 @@ function get_switchable_as_dense(n, component, attribute, snapshots=0)
         static_value = getfield(n, component)[:,attribute]
         missing_cols = setdiff(static_value.axes[1].val, dense.axes[2].val)
         dense = assign(dense, repmat(float.(static_value[missing_cols].data)', T), missing_cols )
-        reindex(dense, columnus=static_value.axes[1])
+        reindex(dense, columns=static_value.axes[1])
     else
         static_value = getfield(n, component)[:,attribute]
         AxisArray(repmat(float.(static_value.data)', T), Axis{:snapshots}(n.snapshots), static_value.axes[1])
@@ -168,6 +169,9 @@ end
 # -------------------------------------------------------------------------------------------------
 # AxisArray functions
 
+idx(dataframe) = Dict(zip(dataframe.axes[1].val, Iterators.countfrom(1)))
+rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe.axes[1].val))
+
 # Use this funtion to assign a new (set of) column(s) or row(s) with given values.
 function assign(df::AxisArray, values, index; axis=1)
     # This could also be done with AxisArrays.merge which breaks however with type 
@@ -184,18 +188,18 @@ function assign(df::AxisArray, values, index; axis=1)
     end
 end
 
-# This does not work yet. 
-# function assign!(df::AxisArray, values, index; axis=1)
+# might be a better way
+# function assign(df::AxisArray, values, index; axis=2)
+#     # This could also be done with AxisArrays.merge which breaks however with type 
+#     # Any.  
 #     in(typeof(index),[String, Symbol, DateTime]) ? index = [index] : nothing
+#     axname = axisnames(df)
 #     if axis == 1
-#         df = AxisArray([df values], 
-#                     axes(df)[1], 
-#                     Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
+#         values = AxisArray(values, Axis{axname[1]}(index), df.axes[2])
 #     elseif axis==2
-#         df = AxisArray([df; values'], 
-#                     Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index...)),  
-#                     axes(df)[2])
+#         values = AxisArray(values, df.axes[1], Axis{axname[2]}(index))
 #     end
+#     cat(axis, df, values)
 # end
 
 
@@ -223,6 +227,40 @@ function reindex(df::AxisArray; index=nothing, columns=nothing)
     df[newindex, newcol]
 end
 
+function grouped_array(A)
+    groups = Dict()
+    for element ∈ unique(A)
+        groups[element] = findin(A, [element])
+    end
+    return groups
+end
+
+# like groupby in pandas 
+function group(A, by_array, func; axis=1)
+    by_array = grouped_array(by_array)
+    grouped = []
+    if ndims(A) == 1
+        for index = keys(by_array)
+            push!(grouped, func(A[by_array[index]]))
+        end
+    else
+        if axis==1
+            for index = keys(by_array)
+                push!(grouped, func(A[by_array[index],:], axis))
+            end
+        elseif axis==2
+            for index = keys(by_array)
+                push!(grouped, func(A[:,by_array[index]], axis))
+            end            
+        end
+        axname = axisnames(df)[axis]
+        grouped = cat(axis, grouped...)
+        axs = grouped.axes |> collect
+        axs[axis] =  Axis{axname}(by_array |> keys |> collect .|> string)
+        grouped = AxisArray(grouped.data, axs...) 
+    end
+    grouped
+end
 
 
 # --------------------------------------------------------------------------------------------------
@@ -230,8 +268,8 @@ end
 
 
 # auxilliaries
-idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
-rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
+# idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
+# rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_sym(dataframe) = Dict(zip(Symbol.(dataframe[:name]), Iterators.countfrom(1)))
 rev_idx_sym(dataframe) = Dict(zip(Iterators.countfrom(1), Symbol.(dataframe[:name])))
 
@@ -305,12 +343,12 @@ end
 
 function to_graph(n)
     busidx = idx(n.buses)
-    g = DiGraph(length(busidx))
-    for l in eachrow(n.lines)
-        add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
+    g = DiGraph(size(n.buses)[1])
+    for l=1:size(n.lines)[1]
+        add_edge!(g, busidx[n.lines[l,"bus0"]], busidx[n.lines[l,"bus1"]] )
     end
-    for l in eachrow(n.links)
-        add_edge!(g, busidx[l[:bus0]], busidx[l[:bus1]] )
+    for l=1:size(n.links)[1]
+        add_edge!(g, busidx[n.links[l,"bus0"]], busidx[n.links[l,"bus1"]] )
     end
     return g
 end
@@ -318,10 +356,10 @@ end
 function incidence_matrix(n)
     busidx = idx(n.buses)
     lines = n.lines
-    K = zeros(nrow(n.buses),nrow(lines))
+    K = zeros(size(n.buses)[1],size(lines)[1])
     for l in 1:size(K)[2]
-        K[busidx[lines[l,:bus0]],l] = 1
-        K[busidx[lines[l,:bus1]],l] = -1
+        K[busidx[lines[l,"bus0"]],l] = 1
+        K[busidx[lines[l,"bus1"]],l] = -1
     end
     return K
 end
@@ -339,9 +377,9 @@ end
 
 function get_cycles(n)
     busidx = idx(n.buses)
-    g = nx[:Graph]()
-    g[:add_nodes_from](busidx)
-    g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(n.lines)])
+    g = networkx[:Graph]()
+    g[:add_nodes_from](1:size(n.buses)[1])
+    g[:add_edges_from]([(busidx[n.lines[l,"bus0"]], busidx[n.lines[l,"bus1"]]) for l=1:size(n.lines)[1]])
     networkx[:cycle_basis](g)
 end
 

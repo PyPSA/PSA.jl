@@ -5,6 +5,7 @@ using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets, NetCDF
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
 include("lopf.jl")
+include("auxilliaries.jl") #don't know why but otherwise some functions are not imported
 
 
 mutable struct network_mutable

@@ -5,7 +5,7 @@ using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets, NetCDF
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
 include("lopf.jl")
-include("auxilliaries.jl") #don't know why but otherwise some functions are not imported
+# include("auxilliaries.jl") #don't know why but otherwise some functions are not imported
 
 
 mutable struct network_mutable
@@ -239,7 +239,8 @@ end
 to_datetime(stringarray) = DateTime.(stringarray, "y-m-d H:M:S")
 
 function import_csv(folder)
-    # reeeally slow right now because of the slow conversion of dynamic data.
+    # reeeally slow right now because of the slow conversion from DataFrames.DataFrame to Array.
+    # Especially for the dynamic data.
     # this would be better if one could set the import type in readdlm to only floats
     # or skip the first column which is the snapshots-string-column
     n = Network()
@@ -253,8 +254,8 @@ function import_csv(folder)
                 setfield!(n, comp, sns)
                 continue
             end 
-            setfield!(n, Symbol(comp), df2axarray(CSV.read("$folder/$comp.csv"; 
-                                              truestring="True", falsestring="False")))
+            df = CSV.read("$folder/$comp.csv"; truestring="True", falsestring="False")
+            setfield!(n, Symbol(comp), df2axarray(df))
         end
     end
     components_t = dynamic_components(n)

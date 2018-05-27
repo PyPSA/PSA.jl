@@ -165,7 +165,7 @@ function lopf(n, solver)
 # 2. add all lines to the model
     # 2.1 set different lines types
     lines = n.lines
-    fix_lines_b = (.!lines[:, "s_nom_extendable"])
+    fix_lines_b = BitArray(.!lines[:, "s_nom_extendable"])
     ext_lines_b = .!fix_lines_b
 
     # 2.2 iterator bounds
@@ -203,7 +203,7 @@ function lopf(n, solver)
 # 3. add all links to the model
     # 3.1 set different link types
     links = n.links
-    fix_links_b = .!links[:,"p_nom_extendable"]
+    fix_links_b = BitArray(.!links[:,"p_nom_extendable"])
     ext_links_b = .!fix_links_b
 
     # 3.2 iterator bounds
@@ -419,7 +419,7 @@ function lopf(n, solver)
     @constraint(m, balance[b=1:N, t=1:T], (
           sum(G[t, g_bus[buses[b]]])
         + sum(LN[t, ln_bus1[buses[b]] ])
-        + sum(linkefficieny[lk_bus1[buses[b]]] .* LK[t, lk_bus1[buses[b]]] )
+        + zsum(linkefficieny[lk_bus1[buses[b]]] .* LK[t, lk_bus1[buses[b]]] )
         + sum(SU_dispatch[t, su_bus[buses[b]]])
 
         - sum(loads[t, l_bus[buses[b]]])
@@ -490,8 +490,8 @@ function lopf(n, solver)
 # 8. set global_constraints
 # only for co2_emissions till now
 
-    if size(n.global_constraints)[1]>0 && in("primary_energy", n.global_constraints[:,"type"])
-        co2_limit = n.global_constraints["co2_limit", "constant"]
+    if size(n.global_constraints)[1]>0# && in("primary_energy", n.global_constraints[:,"type"])
+        co2_limit = n.global_constraints["CO2Limit", "constant"]
         nonnull_carriers = n.carriers[n.carriers[:,"co2_emissions"].!=0, :]
 
         carrier_index(carrier) = findin(string.(generators[:,"carrier"]), [carrier])
@@ -505,8 +505,6 @@ function lopf(n, solver)
 # --------------------------------------------------------------------------------------------------------
 
 # 9. set objective function
-    zsum(array) = length(array)>0 ? sum(array) : 0.
-    zdot(v1,v2) = length(v1)>0 ? dot(v1,v2) : 0.
 
     @objective(m, Min,
 
@@ -562,7 +560,7 @@ function lopf(n, solver)
         n.storage_units[ext_sus_b,"p_nom_opt"] = getvalue(SU_p_nom)
         n.storage_units_t["spill"] = AxisArray(getvalue(SU_spill), Axis{:row}(n.snapshots), 
                                                 Axis{:col}(n.storage_units.axes[1].val))
-        n.storage_units_t["p"] = AxisArray(getvalue(getvalue(SU_dispatch .- SU_store)), 
+        n.storage_units_t["p"] = AxisArray(getvalue(SU_dispatch .- SU_store), 
                                                 Axis{:row}(n.snapshots), 
                                                 Axis{:col}(n.storage_units.axes[1].val))
         n.storage_units_t["state_of_charge"] = AxisArray(getvalue(SU_soc), Axis{:row}(n.snapshots), 

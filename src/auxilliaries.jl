@@ -103,7 +103,7 @@ function calculate_dependent_values!(n)
     defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
                 (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
                 (:cyclic_state_of_charge, false), (:p_nom_extendable, false),
-                (:state_of_charge_initial, 0.), (:p_nom, 0.),
+                (:state_of_charge_initial, 0.), (:p_nom, 0.),(:capital_cost, 0),
                 (:efficiency_dispatch, 1), (:inflow, 0), (:p_nom_opt, 0.)]
     for (col, default) in defaults
         n.storage_units = set_default(n.storage_units, col, default)
@@ -111,7 +111,7 @@ function calculate_dependent_values!(n)
 
     # stores
     defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
-                    (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
+                    (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),(:capital_cost, 0),
                     (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.), (:e_nom_opt, 0.), 
                     (:max_hours, 0)]
     for (col, default) in defaults
@@ -171,6 +171,10 @@ end
 
 idx(dataframe) = Dict(zip(dataframe.axes[1].val, Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe.axes[1].val))
+
+zsum(array) = length(array)>0 ? sum(array) : 0.
+zdot(v1,v2) = length(v1)>0 ? dot(v1,v2) : 0.
+
 
 # Use this funtion to assign a new (set of) column(s) or row(s) with given values.
 function assign(df::AxisArray, values, index; axis=1)
@@ -253,7 +257,7 @@ function group(A, by_array, func; axis=1)
                 push!(grouped, func(A[:,by_array[index]], axis))
             end            
         end
-        axname = axisnames(df)[axis]
+        axname = axisnames(A)[axis]
         grouped = cat(axis, grouped...)
         axs = grouped.axes |> collect
         axs[axis] =  Axis{axname}(by_array |> keys |> collect .|> string)

@@ -1,6 +1,6 @@
 module PSA
 
-using DataFrames, CSV, AxisArrays, NCDatasets, NamedTuples, Dates
+using DataFrames, CSV, AxisArrays, NCDatasets, NamedTuples, Dates, LinearAlgebra
 
 export Network, import_nc, export_nc
 
@@ -220,7 +220,7 @@ function import_nc(path)
 end
 
 function catch_type(array)
-    assert(ndims(array)==1)
+    @assert(ndims(array)==1)
     i = 0
     t = Missing
     while t == Missing

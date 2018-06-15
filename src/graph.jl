@@ -83,9 +83,9 @@ function get_directed_cycles(n, branches=nothing)
 
     function try_both_dirs(bus_tuple)
         if bus_tuple ∈ nor_order
-            findin(nor_order, [bus_tuple])[1], 1. 
+            findall(in([bus_tuple]), nor_order)[1], 1. 
         else 
-            findin(rev_order, [bus_tuple])[1], -1. 
+            findall(in([bus_tuple]), rev_order)[1], -1. 
         end
     end
 
@@ -124,22 +124,23 @@ function set_nuclear_p_nom!(n)
     fix_p_nom = fill(NaN, (length(n.snapshots), length(n.generators[:, "p_nom_extendable"])))
     ext_gens_b = BitArray(n.generators[:, "p_nom_extendable"])
 
-    n.generators_t["p_nom_opt"] = (AxisArray(fix_p_nom, Axis{:time}(n.snapshots), 
+    nan_frame = (AxisArray(fix_p_nom, Axis{:time}(n.snapshots), 
                                    Axis{:col}(n.generators.axes[1][ext_gens_b])))
+    replace_attribute!(n, :generators_t, "p_nom_opt", nan_frame)
     # add values 
     for i in 1:length(n.snapshots)
         if Dates.year(n.snapshots[i]) >= 2020
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 261"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 261"] = 0
         end
         if Dates.year(n.snapshots[i]) >= 2022
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 429"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 217"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 294"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 429"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 217"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 294"] = 0
         end
         if Dates.year(n.snapshots[i]) >= 2023
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 317"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 392"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 257"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 317"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 392"] = 0
+            n.generators_t.p_nom_opt[DateTime(n.snapshots[i]), "Nuclear 257"] = 0
         end
     end
     # return n

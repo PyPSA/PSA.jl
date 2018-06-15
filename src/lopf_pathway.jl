@@ -1,5 +1,5 @@
 using JuMP
-using Base.Test
+using Test
 
 
 include("auxilliaries.jl")
@@ -47,9 +47,9 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     T, = size(n.snapshots) #normally snapshots
     #t_ip = index of snapshot, when you invest, IP number of investments
     t_ip, IP = get_investment_periods(n, investment_period, invest_at_first_sn)
-    info("Solve network with $IP investment timesteps.")
+    @info("Solve network with $IP investment timesteps.")
     total_capacity_line_ext = 1e7
-    info("The total capacity of the extendable lines in all investment periods is $total_capacity_line_ext .")
+    @info("The total capacity of the extendable lines in all investment periods is $total_capacity_line_ext .")
     (size(n.loads_t.p)[1] != T ?
         replace_attribute!(n, :loads_t, :p, n.loads_t.p_set) : nothing)
 
@@ -117,18 +117,18 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
 
     # # add fixed p_nom at a certain snapshot
-    if length(n.generators_t["p_nom_opt"])!=0
-        info("There are fixed p_nom values for the generators.")
-        p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
-        values = n.generators_t["p_nom_opt"][p_nom_set]
+    if length(n.generators_t.p_nom_opt)!=0
+        @info("There are fixed p_nom values for the generators.")
+        p_nom_set = .!isnan.(n.generators_t.p_nom_opt)
+        val = n.generators_t.p_nom_opt[p_nom_set]
         index = findn(p_nom_set)
-        for (t,gr, v) in zip(index...,values)
+        for (t,gr, v) in zip(index...,val)
             @constraint(m,G_p_nom[t, gr] == v)
         end
 
     end
 
-    # 1.5 set constraints for generators
+    # 1.5 set constraints for generator
 
     Ub_ext = p_max_pu[:,ext_gens_b] .* G_p_nom
     Lb_ext = p_min_pu[:,ext_gens_b] .* G_p_nom  
@@ -143,7 +143,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
     G = [G_fix G_ext G_com] # G is the concatenated variable array
     # sort generators the same way
-    generators = generators[[find(fix_gens_b) ; find(ext_gens_b); find(com_gens_b)],:] 
+    generators = generators[[findall(fix_gens_b) ; findall(ext_gens_b); findall(com_gens_b)],:] 
     # new booleans
     ext_gens_b = BitArray(generators[:, "p_nom_extendable"])
     com_gens_b = BitArray(generators[:, "commitable"])
@@ -207,11 +207,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     end )
 
     LN = [LN_fix LN_ext]
-    lines = lines[[find(fix_lines_b) ; find(ext_lines_b)], : ]
+    lines = lines[[findall(fix_lines_b) ; findall(ext_lines_b)], : ]
 
     ext_lines_b = BitArray(lines[:, "s_nom_extendable"])
     fix_lines_b = .! ext_lines_b
-
+    @info("lines passed")
 # ------------------------------------------------------------------------------
 
 # 3. add all links to the model
@@ -263,10 +263,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     end)
 
     LK = [LK_fix LK_ext]
-    links = links[[find(fix_links_b) ; find(ext_links_b)], : ]
+    links = links[[findall(fix_links_b) ; findall(ext_links_b)], : ]
     ext_links_b = BitArray(links[:, "p_nom_extendable"])
     fix_links_b = .!ext_links_b
 
+    @info("links passed")
 # ------------------------------------------------------------------------------
 # 4. define storage_units
     # 4.1 set different storage_units types
@@ -318,24 +319,24 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
             [t=1:T,s=1:N_ext], SU_store_ext[t,s] <= Ub_stor_ext[s]
             [t=1:T,s=1:N_ext], SU_soc_ext[t,s] <= Ub_soc_ext[s]
     end)
-
+    
     # 4.5 set charging constraint
     SU_dispatch = [SU_dispatch_fix SU_dispatch_ext]
     SU_store = [SU_store_fix SU_store_ext]
     SU_soc = [SU_soc_fix SU_soc_ext]
     SU_spill = [SU_spill_fix SU_spill_ext]
 
-    storage_units = storage_units[[find(fix_sus_b) ; find(ext_sus_b)], :]
-    inflow = inflow[:,[find(fix_sus_b); find(ext_sus_b)]]
+    storage_units = storage_units[[findall(fix_sus_b) ; findall(ext_sus_b)], :]
+    inflow = inflow[:,[findall(fix_sus_b); findall(ext_sus_b)]]
     ext_sus_b = BitArray(storage_units[:,"p_nom_extendable"])
 
-
-    is_cyclic_i = find(storage_units[:, "cyclic_state_of_charge"])
-    not_cyclic_i = find(.!BitArray(storage_units[:,"cyclic_state_of_charge"]))
+    
+    is_cyclic_i = findall(storage_units[:, "cyclic_state_of_charge"])
+    not_cyclic_i = findall(.!BitArray(storage_units[:,"cyclic_state_of_charge"]))
   
-
+    
     SU_soc_change = (storage_units[:,"efficiency_store"]' .* SU_store 
-                    - 1/storage_units[:,"efficiency_dispatch"]' .* SU_dispatch 
+                    - 1 ./storage_units[:,"efficiency_dispatch"]' .* SU_dispatch 
                     + inflow - SU_spill)
 
 
@@ -344,7 +345,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
             [s=not_cyclic_i], SU_soc[1,s] == storage_units[s,"state_of_charge_initial"] + SU_soc_change[1,s] 
             [t=2:T,s=1:N_sus], SU_soc[t,s] == SU_soc[t-1,s] + SU_soc_change[t,s]
         end)
-
+    @info("storage units passed")
 # ------------------------------------------------------------------------------
 
 # 5. define stores
@@ -405,16 +406,16 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     ST_soc = [ST_soc_fix ST_soc_ext]
     ST_spill = [ST_spill_fix ST_spill_ext]
 
-    stores = stores[[find(fix_stores_b) ; find(ext_stores_b)], :]
-    inflow = inflow[:,[find(fix_stores_b); find(ext_stores_b)]]
+    stores = stores[[findall(fix_stores_b) ; findall(ext_stores_b)], :]
+    inflow = inflow[:,[findall(fix_stores_b); findall(ext_stores_b)]]
     ext_stores_b = BitArray(stores[:,"e_nom_extendable"])
 
 
-    is_cyclic_i = find(stores[:, "cyclic_state_of_charge"])
-    not_cyclic_i = find(.!stores[:,"cyclic_state_of_charge"])
+    is_cyclic_i = findall(stores[:, "cyclic_state_of_charge"])
+    not_cyclic_i = findall(.!stores[:,"cyclic_state_of_charge"])
 
     ST_soc_change = (stores[:,"efficiency_store"]' .* ST_store 
-                    - 1/stores[:,"efficiency_dispatch"]' .* ST_dispatch 
+                    - 1 ./stores[:,"efficiency_dispatch"]' .* ST_dispatch 
                     + inflow - ST_spill)
 
 
@@ -425,12 +426,14 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
         end)
 
     tic()
+
+    @info("stores passed")
 # ------------------------------------------------------------------------------
 
 ## 6. define nodal balance constraint
 
     #load data in correct order
-    loads = n.loads_t["p"].data
+    loads = n.loads_t.p.data
 
     add_missing_buses(d) = (for b=setdiff(buses, keys(d)) d[b]  = Int[] end; d)
 
@@ -457,7 +460,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
           == 0 ))
 
-
+    @info("nodal balance passed")
 # --------------------------------------------------------------------------------------------------------
 
 # 7. set Kirchhoff Voltage Law constraint
@@ -471,13 +474,18 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 # for (sn, sub) in enumerate(weakly_connected_components(g))
 #     g_sub = induced_subgraph(g, sub)[1]
 
-    @variable(m, y, Bin)   # add binary variable
+    # @variable(m, y, Bin)   # add binary variable
     # lines_used = LN .!= 0
     (branches, var, attribute) = (lines[fix_lines_b, :], LN_fix, "x_pu")
-    cycles, dirs = get_directed_cycles(n, branches)
-    @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
-            dot(dirs[c] .* float.(branches[cycles[c], attribute]) .*1e5 ,
-                var[t, cycles[c]]) == 0)
+    @show(size(branches))
+    @info("Kirchhoff 1 passed")
+    # Here is the problematic function
+    # cycles, dirs = get_directed_cycles(n, branches)
+    # @info("Kirchhoff 2 passed")
+    # @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
+    #         dot(dirs[c] .* float.(branches[cycles[c], attribute]) .* 1e5 ,
+    #             var[t, cycles[c]]) == 0)
+    @info("Kirchhoff 3 passed")
 # --------------------------------------------------------------------------------------------------------
 
 # 8. set global_constraints
@@ -487,13 +495,15 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
         co2_limit = n.global_constraints["CO2Limit", "constant"]
         nonnull_carriers = n.carriers[n.carriers[:,"co2_emissions"].!=0, :]
 
-        carrier_index(carrier) = findin(string.(generators[:,"carrier"]), [carrier])
+        carrier_index(carrier) = findall(in(string.(generators[:,"carrier"])), [carrier])
 
         @constraint(m, sum(sum(dot(1/float.(generators[carrier_index(carrier) , "efficiency"]),
                     G[t,carrier_index(carrier)]) for t=1:T)
                     * n.carriers[carrier, "co2_emissions"]
                     for carrier in nonnull_carriers.axes[1].val) <=  co2_limit)
     end
+
+    @info("global constraints passed")
 
 # --------------------------------------------------------------------------------------------------------
 # muss noch umgeschrieben werden, maintenance_cost für alle Generatoren, nicht nur extenable
@@ -528,39 +538,38 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     if status==:Optimal
         # generators
         orig_gen_order = n.generators.axes[1].val
-        # generators[.!ext_gens_b, "p_nom_opt"] = generators[.!ext_gens_b, "p_nom"]
-        # generators[ext_gens_b,"p_nom_opt"] = getvalue(G_p_nom)
         n.generators = generators
-        n.generators_t["p_nom_opt"] = AxisArray(getvalue(G_p_nom), 
-                                                Axis{:row}(n.snapshots), 
-                                                Axis{:col}(generators.axes[1].val[ext_gens_b]))
-        n.generators_t["p"] = AxisArray(getvalue(G), 
-                                        Axis{:row}(n.snapshots), 
-                                        Axis{:col}(generators.axes[1].val))
+        data = AxisArray(getvalue(G_p_nom), Axis{:row}(n.snapshots), 
+                                            Axis{:col}(generators.axes[1].val[ext_gens_b]))
+        replace_attribute!(n, :generators_t, "p_nom_opt", data)
+        data = AxisArray(getvalue(G), Axis{:row}(n.snapshots), 
+                                      Axis{:col}(generators.axes[1].val))
+        replace_attribute!(n, :generators_t, "p", data)
         n.generators = reindex(n.generators, index = orig_gen_order)
+        @info("Passed")
 
         # lines
         orig_line_order = n.lines.axes[1].val
         n.lines = lines
         n.lines[fix_lines_b,"s_nom_opt"] = n.lines[fix_lines_b, "s_nom"]
-        # n.lines[ext_lines_b,"s_nom_opt"] = getvalue(LN_s_nom)
-        n.lines_t["p0"] = AxisArray(getvalue(LN),  
-                                    Axis{:row}(n.snapshots), 
-                                    Axis{:col}(n.lines.axes[1].val))
-        n.lines_t["s_nom_opt"] = AxisArray(getvalue(LN_s_nom), 
-        Axis{:row}(n.snapshots), Axis{:col}(n.lines.axes[1].val[ext_lines_b]))
+        data = AxisArray(getvalue(LN), Axis{:row}(n.snapshots), 
+                                       Axis{:col}(n.lines.axes[1].val))
+        replace_attribute!(n, :lines_t, "p0", data)
+        data = AxisArray(getvalue(LN_s_nom), Axis{:row}(n.snapshots), 
+                                             Axis{:col}(n.lines.axes[1].val[ext_lines_b]))
+        replace_attribute!(n, :lines_t, "s_nom_opt", data)
         n.lines = reindex(n.lines, index = orig_line_order)
 
         # links
         orig_link_order = n.links.axes[1].val
         n.links = links
         n.links[fix_links_b,"p_nom_opt"] = n.links[fix_links_b, "p_nom"]
-        # n.links[ext_links_b,"p_nom_opt"] = getvalue(LK_p_nom)
-        n.links_t["p0"] = AxisArray(getvalue(LK), 
-                                    Axis{:row}(n.snapshots), 
-                                    Axis{:col}(n.links.axes[1].val))
-        n.links_t["p_nom_opt"] = AxisArray(getvalue(LK_p_nom), 
-        Axis{:row}(n.snapshots), Axis{:col}(n.links.axes[1].val[ext_links_b]))
+        data = AxisArray(getvalue(LK), Axis{:row}(n.snapshots), 
+                                       Axis{:col}(n.links.axes[1].val))
+        replace_attribute!(n, :links_t, "p0", data)
+        data = AxisArray(getvalue(LK_p_nom), Axis{:row}(n.snapshots), 
+                                             Axis{:col}(n.links.axes[1].val[ext_links_b]))
+        replace_attribute!(n, :links_t, "p_nom_opt", data)
         n.links = reindex(n.links, index = orig_link_order)
 
         # storage_units
@@ -568,27 +577,34 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
         n.storage_units = storage_units
         n.storage_units[fix_sus_b,"p_nom_opt"] = n.storage_units[fix_sus_b, "p_nom"]
         n.storage_units[ext_sus_b,"p_nom_opt"] = getvalue(SU_p_nom)
-        n.storage_units_t["spill"] = AxisArray(getvalue(SU_spill), Axis{:row}(n.snapshots), 
-                                                Axis{:col}(n.storage_units.axes[1].val))
-        n.storage_units_t["p"] = AxisArray(getvalue(SU_dispatch .- SU_store), 
+        data = AxisArray(getvalue(SU_spill), Axis{:row}(n.snapshots), 
+                                             Axis{:col}(n.storage_units.axes[1].val))
+        replace_attribute!(n, :storage_units_t, "spill", data)
+        data = AxisArray(getvalue(SU_dispatch .- SU_store), 
                                                 Axis{:row}(n.snapshots), 
                                                 Axis{:col}(n.storage_units.axes[1].val))
-        n.storage_units_t["state_of_charge"] = AxisArray(getvalue(SU_soc), Axis{:row}(n.snapshots), 
-                                                Axis{:col}(n.storage_units.axes[1].val))
+        replace_attribute!(n, :storage_units_t, "p", data)
+        data = AxisArray(getvalue(SU_soc), Axis{:row}(n.snapshots), 
+                                           Axis{:col}(n.storage_units.axes[1].val))
+        replace_attribute!(n, :storage_units_t, "state_of_charge", data)
         n.storage_units = reindex(n.storage_units, index = orig_sus_order)
+        @info("Passed")
 
         # stores
         orig_stores_order = n.stores.axes[1].val
         n.stores = stores
         n.stores[fix_stores_b,"e_nom_opt"] = n.stores[fix_stores_b, "e_nom"]
         n.stores[ext_stores_b,"e_nom_opt"] = getvalue(ST_e_nom)
-        n.stores_t["spill"] = AxisArray(getvalue(ST_spill), Axis{:row}(n.snapshots), 
-                                                Axis{:col}(n.stores.axes[1].val))
-        n.stores_t["e"] = AxisArray(getvalue(getvalue(ST_dispatch .- ST_store)), 
+        data = AxisArray(getvalue(ST_spill), Axis{:row}(n.snapshots), 
+                                             Axis{:col}(n.stores.axes[1].val))
+        replace_attribute!(n, :stores_t, "spill", data)
+        data = AxisArray(getvalue(getvalue(ST_dispatch .- ST_store)), 
                                                 Axis{:row}(n.snapshots), 
                                                 Axis{:col}(n.stores.axes[1].val))
-        n.stores_t["state_of_charge"] = AxisArray(getvalue(ST_soc), Axis{:row}(n.snapshots), 
-                                                Axis{:col}(n.stores.axes[1].val))
+        replace_attribute!(n, :stores_t, "e", data)                   
+        data = AxisArray(getvalue(ST_soc), Axis{:row}(n.snapshots), 
+                                           Axis{:col}(n.stores.axes[1].val))
+        replace_attribute!(n, :stores_t, "state_of_charge", data)
         n.stores = reindex(n.stores, index = orig_stores_order)
 
         

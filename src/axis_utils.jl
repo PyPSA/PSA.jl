@@ -64,7 +64,7 @@ end
 function grouped_array(A)
     groups = Dict()
     for element ∈ unique(A)
-        groups[element] = findin(A, [element])
+        groups[element] = findall(in([element]), A)
     end
     return groups
 end

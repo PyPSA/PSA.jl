@@ -112,7 +112,7 @@ function lopf(n, solver)
 
         Lb_com[t,gr] <= G_com[t=1:T,gr=1:N_com] <= Ub_com[t,gr]
     end
-    
+
     # 1.4 set constraints for generators
 
     Ub_ext = broadcast(*, p_max_pu[:,ext_gens_b], G_p_nom');
@@ -396,7 +396,7 @@ function lopf(n, solver)
             [t=2:T,s=1:N_st], ST_soc[t,s] == ST_soc[t-1,s] + ST_soc_change[t,s]
         end)
 
-
+    tic()
 # --------------------------------------------------------------------------------------------------------
 
 ## 6. define nodal balance constraint

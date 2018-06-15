@@ -177,9 +177,9 @@ end
 
 function import_nc(path)
     # both packages NCDatasets and NetCDF seem to work fine. NCDatasets gives better 
-    # insight about variables and attributes of the .nc file however import is faster 
-    # and easier with NetCDF (one disadvantage may lay in the fact that missings are nothing
-    # catch, which is however provided by NCDatasets).  
+    # insight into variables and attributes of the .nc file however import is faster 
+    # and easier with NetCDF (one disadvantage may lay in the fact that missings are not
+    # catched, which is however covered by NCDatasets).  
     n = Network()
     ds_keys = keys(NCDatasets.Dataset(path)) 
     components = static_components(n)

@@ -83,16 +83,16 @@ function lopf(network, solver)
 
     @variable m G_ext[gr=1:N_ext,t = 1:T]
 
-    @variable m p_nom_max[gr] <=  gen_p_nom[gr=1:N_ext] <= p_nom_max[gr]
+    @variable m p_nom_min[gr] <=  gen_p_nom[gr=1:N_ext] <= p_nom_max[gr]
 
     @constraints m begin
         [gr=1:N_ext,t=1:T], G_ext[gr,t] >= gen_p_nom[gr]*p_min_pu(t,gr)
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_min_pu(t,gr)
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_max_pu(t,gr)
     end
 
 
-    G = [G_fix; G_ext; G_com] # G is the concatenated variable array
-    generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:]; generators[com_gens_b,:] ] # sort generators the same
+    G = [G_fix; G_ext] # G is the concatenated variable array
+    generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ] # sort generators the same
     # new booleans
     fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
     ext_gens_b = convert(BitArray, generators[:p_nom_extendable])

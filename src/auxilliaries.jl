@@ -17,6 +17,7 @@ end
 
 function static_components(n)
     fields = String.(fieldnames(n))
+    deleteat!(fields, findin(fields, ["name"]))
     components = []
     for field=fields
         field[end-1:end] != "_t" ? push!(components, field) : nothing

@@ -1,8 +1,8 @@
 module PSA
 
-using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets, NetCDF
+using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets
 
-export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
+export Network, import_nc, export_nc
 
 include("lopf.jl")
 # include("auxilliaries.jl") #don't know why but otherwise some functions are not imported
@@ -28,6 +28,7 @@ mutable struct network_mutable
     stores_t::Dict{String,AxisArray}
     transformers_t::Dict{String,AxisArray}
     snapshots::Array
+    name::String
 end
 
 function Network(
@@ -144,63 +145,50 @@ function Network(
     transformers_t= Dict{String,AxisArray}( [("q1", AxisArray([])), ("q0", AxisArray([])), ("p0", AxisArray([])),
         ("p1", AxisArray([])), ("mu_upper", AxisArray([])), ("mu_lower", AxisArray([])),
         ("s_max_pu", AxisArray([]))]),
-    snapshots=Array([])
-
+    snapshots=Array([]), 
+    name = "PSA network"
     )
     network_mutable(
         buses, generators, loads, lines, links, storage_units, stores, transformers, carriers,
         global_constraints,
         buses_t, generators_t, loads_t, lines_t, links_t, storage_units_t, stores_t, transformers_t,
-        snapshots);
+        snapshots,name);
 end
 
 
-# auxiliary for import_nc
-function char_to_string(data)
-    # data = copy(data)
-    data = Array{UInt8}(data)
-    squeeze(mapslices(i -> unsafe_string(pointer(i)), data, 1), 1)
-end
 
 # auxiliary for import_nc
-function reformat(data::Array)
-    if typeof(data) == Array{Int8,1}
-        Array{Bool}(data)
-    elseif typeof(data) == Array{UInt8,2}
-        char_to_string(data)
-    elseif typeof(data) == Array{Int64, 1}
-        Array{Float64}(data)
+function reformat(data::DataArrays.DataArray)
+    if typeof(data) == DataArrays.DataArray{Int8,1}
+        DataArrays.DataArray{Bool}(data)
+    elseif typeof(data) == DataArrays.DataArray{Char,2}
+        # char to string
+        data = Array{UInt8}(data)
+        squeeze(mapslices(i -> unsafe_string(pointer(i)), data, 1), 1)
+    elseif typeof(data) == DataArrays.DataArray{Int64, 1}
+        DataArrays.DataArray{Float64}(data)
     else
         data    
     end
 end
 
 function import_nc(path)
-    # both packages NCDatasets and NetCDF seem to work fine. NCDatasets gives better 
-    # insight into variables and attributes of the .nc file however import is faster 
-    # and easier with NetCDF (one disadvantage may lay in the fact that missings are not
-    # catched, which is however covered by NCDatasets).  
     n = Network()
-    ds_keys = keys(NCDatasets.Dataset(path)) 
+    ds = NCDatasets.Dataset(path)
+    ds_keys = keys(ds) 
     components = static_components(n)
     found = ""
     for comp = string.(components)
         if any(contains.(ds_keys, comp))
             found = found * "$comp, "
             if comp == "snapshots"
-                timeattr = split(ncgetatt(path, comp, "units"), " ")
-                sns = DateTime(timeattr[3])+Dates.Hour.(ncread(path, comp))
-                # weightings = ncread(path, "snapshots_weightings")
-                # setfield!(n, Symbol(comp),
-                #         AxisArray(  [sns weightings],
-                #         Axis{:row}(1:length(sns)), Axis{:col}([comp, "weightings"]) ))             
-                setfield!(n, Symbol(comp), sns)
+                setfield!(n, Symbol(comp), Array(ds["snapshots"][:]))
             else
-                index = reformat(ncread(path, comp * "_i"))
+                index = reformat(ds[comp * "_i"][:])
                 props = ds_keys[find(contains.(ds_keys,   Regex("$(comp)_(?!(i\$|t_))"))) ]
                 cols = props
                 setfield!(n, Symbol(comp),
-                        AxisArray(  hcat([reformat(ncread(path, key)) for key = props]...) ,
+                        AxisArray(  hcat([reformat(ds[key][:]) for key = props]...) ,
                         Axis{:row}(index), Axis{:col}(replace.(props, comp * "_", ""))) )
             end
         end
@@ -215,16 +203,103 @@ function import_nc(path)
             if in("$(comp)_$attr", ds_keys)
                 found = found * "$(comp)_$attr, "
                 getfield(n,comp)[attr]= (
-                        AxisArray( ncread(path , "$(comp)_$attr")',
+                        AxisArray( ds["$(comp)_$attr"][:]',
                                 Axis{:snapshots}(n.snapshots), 
-                                Axis{comp_stat}(reformat(ncread(path, "$(comp)_$(attr)_i")) ) )             
+                                Axis{comp_stat}(reformat(ds["$(comp)_$(attr)_i"][:]) ) )             
                 )
             end
         end
     end
+    n.name = ds.attrib["network_name"]
+    close(ds)
     info("The following dynamic components were imported: \n $(found)")
     n;
 end
+
+function catch_type(array)
+    assert(ndims(array)==1)
+    i = 0
+    t = Missing
+    while t == Missing
+        i += 1
+        t = typeof(array[i])
+    end
+    t==Bool ? Int8 : t
+end
+
+
+function export_nc(n, path)
+    ispath(path) ? rm(path) : nothing
+    ds = Dataset(path,"c")
+    found = ""
+    for comp = static_components(n)
+        data = getfield(n, comp)
+        comp = String(comp) 
+        if length(data)  > 0 
+            found = found * "$comp, "
+            if comp == "snapshots"
+                # Dimension
+                defDim(ds, comp, length(data))
+                # Variable
+                sn = defVar(ds, comp, Int64, (comp,))
+                start_time = replace(string(n.snapshots[1]), "T", " ")
+                sn.attrib["units"] = "hours since $start_time"
+                sn.attrib["calendar"] = "proleptic_gregorian"
+                sn[:] = 1:length(data)
+            else
+                # Dimension
+                rows = data.axes[1].val
+                string_length = maximum(length.(rows))
+                ds.dim["$(comp)_i"] = size(rows)[1]
+                # ds.dim["string$string_length"] = string_length
+
+                # Variable
+                index = defVar(ds, "$(comp)_i", String, ("$(comp)_i", ))
+                index[:] = rows
+                for col in data.axes[2].val
+                    vartype = catch_type(data[:,col])
+                    var = defVar(ds, "$(comp)_$col", vartype, ("$(comp)_i",))
+                    vartype == Int8 ? var.attrib["dtype"] = "bool" : nothing 
+                    var[:] = data[:, col].data
+                    var.attrib["FillValue"] = NaN
+                end
+            end
+        end
+    end
+    info("The following static components were exported: \n $found")
+    found = ""
+    for comp=dynamic_components(n)
+        for attr in keys(getfield(n, comp))
+            data = getfield(n, comp)[attr]
+            # comp = string(comp)
+            if length(data)  > 0 
+                found = found * "$(string(comp)[1:end-2]), "
+                # Dimension
+                cols = data.axes[2].val
+                string_length = maximum(length.(cols))
+                ds.dim["$(comp)_$(attr)_i"] = length(cols)
+                # ds.dim["string$string_length"] = string_length
+
+
+                index = defVar(ds, "$(comp)_$(attr)_i", String,  
+                        ("$(comp)_$(attr)_i",) )
+                index[:] = cols
+                var = defVar(ds, "$(comp)_$attr", Float32, 
+                        ("$(comp)_$(attr)_i","snapshots",  ))
+                var[:,:] = data.data
+            end
+        end
+    end
+    ds.attrib["_NCProperties"] = "..."
+    ds.attrib["network_srid"] = ""
+    ds.attrib["network_pypsa_version"] = "0.13.1"
+    ds.attrib["network_name"] = n.name
+
+    info("The following dynamic components were exported: \n $(found)")
+    close(ds)
+end
+
+# ------------------------------------------------------------------------------------------------
 
 # auxiliary for import_csv
 function df2axarray(df; indexname=:row, colname=:col, index=nothing, dtype=Any)
@@ -278,7 +353,7 @@ function import_csv(folder)
 end
 
 
-function export_network(n, folder)
+function export_csv(n, folder)
     !ispath(folder) ? mkdir(folder) : nothing
     components_t = [field for field=fieldnames(n) if String(field)[end-1:end]=="_t"]
     for field_t in components_t
@@ -294,6 +369,8 @@ function export_network(n, folder)
         writetable("$folder/$field.csv", getfield(n, field))
     end
 end
+
+
 
 
 

@@ -314,12 +314,14 @@ function df2axarray(df; indexname=:row, colname=:col, index=nothing, dtype=Any)
     # take first column as index 
     index == nothing ? index = string.(df[1]) : nothing
     cols = string.(names(df)[2:end])
-    data = Array{dtype}(df[:,2:end])
+    # deal with index or column only
+    shape = length(index), length(cols) 
+    prod(shape) == 0 ? data = Array{Any, 2}(shape) : data = Array{dtype}(df[:,2:end]) 
     AxisArray(data, Axis{indexname}(index), Axis{colname}(cols))
 end
 
 # auxiliary for import_csv
-to_datetime(stringarray) = DateTime.(stringarray, "y-m-d H:M:S")
+to_datetime(dates::Array{String}) = DateTime.(dates, "y-m-d H:M:S")
 
 function import_csv(folder)
     # reeeally slow right now because of the slow conversion from DataFrames.DataFrame to Array.
@@ -333,7 +335,7 @@ function import_csv(folder)
         if ispath("$folder/$comp.csv")
             if comp == :snapshots 
                 sns = CSV.read("$folder/$comp.csv")
-                sns = to_datetime(sns[:name])
+                typeof(sns) == Array{String} ? sns = to_datetime(sns[:name]) : sns = Array(sns[:name])
                 setfield!(n, comp, sns)
                 continue
             end 

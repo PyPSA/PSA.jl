@@ -396,7 +396,6 @@ function lopf(n, solver)
             [t=2:T,s=1:N_st], ST_soc[t,s] == ST_soc[t-1,s] + ST_soc_change[t,s]
         end)
 
-    tic()
 # --------------------------------------------------------------------------------------------------------
 
 ## 6. define nodal balance constraint
@@ -490,8 +489,10 @@ function lopf(n, solver)
 # 8. set global_constraints
 # only for co2_emissions till now
 
-    if size(n.global_constraints)[1]>0# && in("primary_energy", n.global_constraints[:,"type"])
-        co2_limit = n.global_constraints["CO2Limit", "constant"]
+    if size(n.global_constraints)[1]>0 && in("primary_energy", n.global_constraints[:,"type"])
+        co2_limit = (in("CO2Limit", n.global_constraints.axes[1].val) ?
+                    n.global_constraints["CO2Limit", "constant"] :
+                    n.global_constraints["co2_limit", "constant"])
         nonnull_carriers = n.carriers[n.carriers[:,"co2_emissions"].!=0, :]
 
         carrier_index(carrier) = findin(string.(generators[:,"carrier"]), [carrier])

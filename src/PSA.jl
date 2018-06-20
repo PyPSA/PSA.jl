@@ -1,6 +1,6 @@
 module PSA
 
-using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets
+using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets, DataArrays
 
 export Network, import_nc, export_nc
 
@@ -174,7 +174,7 @@ end
 
 function import_nc(path)
     n = Network()
-    ds = NCDatasets.Dataset(path)
+    ds = Dataset(path, )
     ds_keys = keys(ds) 
     components = static_components(n)
     found = ""
@@ -182,7 +182,16 @@ function import_nc(path)
         if any(contains.(ds_keys, comp))
             found = found * "$comp, "
             if comp == "snapshots"
-                setfield!(n, Symbol(comp), Array(ds["snapshots"][:]))
+                if ds[comp].attrib["calendar"] == "proleptic_gregorian"
+                    # proleptic_gregorian calendar has the same dates as gregorian for 
+                    # concerning years 
+                    data = NCDatasets.timedecode(1:size(ds["snapshots"])[1], 
+                            ds["snapshots"].attrib["units"])   
+                else
+                    data = ds["snapshots"][:]    
+                end    
+                setfield!(n, Symbol(comp), Array(data))
+
             else
                 index = reformat(ds[comp * "_i"][:])
                 props = ds_keys[find(contains.(ds_keys,   Regex("$(comp)_(?!(i\$|t_))"))) ]
@@ -242,9 +251,8 @@ function export_nc(n, path)
                 defDim(ds, comp, length(data))
                 # Variable
                 sn = defVar(ds, comp, Int64, (comp,))
-                start_time = replace(string(n.snapshots[1]), "T", " ")
-                sn.attrib["units"] = "hours since $start_time"
-                sn.attrib["calendar"] = "proleptic_gregorian"
+                sn.attrib["units"] = "hours since $(data[1])"
+                sn.attrib["calendar"] = "gregorian"
                 sn[:] = 1:length(data)
             else
                 # Dimension
@@ -284,7 +292,7 @@ function export_nc(n, path)
                 index = defVar(ds, "$(comp)_$(attr)_i", String,  
                         ("$(comp)_$(attr)_i",) )
                 index[:] = cols
-                var = defVar(ds, "$(comp)_$attr", Float32, 
+                var = defVar(ds, "$(comp)_$attr", Float64, 
                         ("$(comp)_$(attr)_i","snapshots",  ))
                 var[:,:] = data.data
             end

@@ -58,21 +58,20 @@ end
 
 function calculate_dependent_values!(n)
     function set_default(df, col, default)
-        col = String(col)
         !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1]),1), col) : df
     end
 
     #buses
-    defaults = [(:v_nom, 1.)]
+    defaults = [("v_nom", 1.)]
     for (col, default) in defaults
         n.buses = set_default(n.buses, col, default)
     end
 
     # generators
-    defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf),(:commitable, false),
-                (:p_min_pu, 0), (:p_max_pu, 1), (:p_nom_min, 0),(:capital_cost, 0),
-                (:min_up_time, 0), (:min_down_time, 0), (:initial_status, true),
-                (:p_nom, 0.),(:marginal_cost, 0),(:p_nom_opt, 0.), (:efficiency, 1.)]
+    defaults = [("p_nom_extendable", false), ("p_nom_max", Inf),("commitable", false),
+                ("p_min_pu", 0), ("p_max_pu", 1), ("p_nom_min", 0),("capital_cost", 0),
+                ("min_up_time", 0), ("min_down_time", 0), ("initial_status", true),
+                ("p_nom", 0.),("marginal_cost", 0),("p_nom_opt", 0.), ("efficiency", 1.)]
     for (col, default) in defaults
         n.generators = set_default(n.generators, col, default)
     end
@@ -82,8 +81,9 @@ function calculate_dependent_values!(n)
     vnom = []; for bus=string.(n.lines[:,"bus0"]) push!(vnom, n.buses[bus, "v_nom"]) end    
     n.lines = assign(n.lines, vnom, "v_nom")
 
-    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_opt, 0.)]
+    defaults = [("s_nom_extendable", false), ("s_nom_min", 0),("s_nom_max", Inf), ("s_nom", 0.),
+                ("s_nom_min", 0), ("s_nom_max", Inf), ("capital_cost", 0), ("g", 0), ("s_nom_opt", 0.), 
+                ("r", 0), ("b",0), ("g",0)]
     for (col, default) in defaults
         n.lines = set_default(n.lines, col, default)
     end
@@ -93,28 +93,28 @@ function calculate_dependent_values!(n)
     n.lines = assign(n.lines, float.(n.lines[:,"g"]).*float.(n.lines[:,"v_nom"]).^2,   "g_pu")
 
     # links
-    defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
-                (:p_max_pu, 1),(:p_nom_min, 0), (:p_nom_max, Inf), (:capital_cost, 0),
-                (:marginal_cost, 0), (:p_nom, 0.), (:efficiency, 1), (:p_nom_opt, 0.)]
+    defaults = [("p_nom_extendable", false), ("p_nom_max", Inf), ("p_min_pu", 0),
+                ("p_max_pu", 1),("p_nom_min", 0), ("p_nom_max", Inf), ("capital_cost", 0),
+                ("marginal_cost", 0), ("p_nom", 0.), ("efficiency", 1), ("p_nom_opt", 0.)]
     for (col, default) in defaults
         n.links = set_default(n.links, col, default)
     end
 
     # storage_units
-    defaults = [(:p_nom_min, 0), (:p_nom_max, Inf), (:p_min_pu, -1),
-                (:p_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),
-                (:cyclic_state_of_charge, false), (:p_nom_extendable, false),
-                (:state_of_charge_initial, 0.), (:p_nom, 0.),(:capital_cost, 0),
-                (:efficiency_dispatch, 1), (:inflow, 0), (:p_nom_opt, 0.)]
+    defaults = [("p_nom_min", 0), ("p_nom_max", Inf), ("p_min_pu", -1),
+                ("p_max_pu", 1), ("marginal_cost", 0), ("efficiency_store", 1),
+                ("cyclic_state_of_charge", false), ("p_nom_extendable", false),
+                ("state_of_charge_initial", 0.), ("p_nom", 0.),("capital_cost", 0),
+                ("efficiency_dispatch", 1), ("inflow", 0), ("p_nom_opt", 0.)]
     for (col, default) in defaults
         n.storage_units = set_default(n.storage_units, col, default)
     end
 
     # stores
-    defaults = [(:e_nom_min, 0), (:e_nom_max, Inf), (:e_min_pu, -1),
-                    (:e_max_pu, 1), (:marginal_cost, 0), (:efficiency_store, 1),(:capital_cost, 0),
-                    (:efficiency_dispatch, 1),(:inflow, 0), (:e_nom, 0.), (:e_nom_opt, 0.), 
-                    (:max_hours, 0)]
+    defaults = [("e_nom_min", 0), ("e_nom_max", Inf), ("e_min_pu", -1),
+                    ("e_max_pu", 1), ("marginal_cost", 0), ("efficiency_store", 1),("capital_cost", 0),
+                    ("efficiency_dispatch", 1),("inflow", 0), ("e_nom", 0.), ("e_nom_opt", 0.), 
+                    ("max_hours", 0)]
     for (col, default) in defaults
         n.stores = set_default(n.stores, col, default)
     end

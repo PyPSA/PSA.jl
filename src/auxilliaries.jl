@@ -50,7 +50,7 @@ function align_component_order!(network)
     end
 end
 
-# auxilliary funcitons
+# auxilliary functions
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
@@ -231,10 +231,22 @@ function laplace_matrix(network)
     return K*K'
 end
 
-function ptdf_matrix(network)
+function weighted_laplace_matrix(network) # TODO test
     K = incidence_matrix(network)
-    H = K' * pinv(K*K')
-    return H .- H[:,1]
+    B = reactance_matrix(network)
+    return K*B*K'
+end
+
+function reactance_matrix(network) # TODO test
+    return diagm(network.lines[:x])
+end
+
+function ptdf_matrix(network) # TODO test
+    K = incidence_matrix(network)
+    B = reactance_matrix(network)
+    L = weighted_laplace_matrix(network)
+    H = B * K' * pinv(L)
+    return H .- H[:,1] # TODO why minus H[:,1]?
 end
 
 function get_cycles(network)

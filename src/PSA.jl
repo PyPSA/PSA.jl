@@ -147,6 +147,8 @@ function import_network(folder)
     components = static_components(network)
     for component=components
         if ispath("$folder/$component.csv")
+
+            println("Importing $folder/$component.csv")
             # fallback for missing values
             try
                 setfield!(network,component,CSV.read("$folder/$component.csv"; truestring="True",
@@ -175,6 +177,9 @@ function import_network(folder)
         for attr in keys(getfield(network, component_t))
             component = Symbol(String(component_t)[1:end-2])
             if ispath("$folder/$component-$attr.csv")
+
+                println("Importing $folder/$component-$attr.csv")
+
                 # fallback for missing values for a non-null column type, might be deprecated soon
                 try
                     getfield(network,component_t)[attr]= (

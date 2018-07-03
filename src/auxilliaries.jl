@@ -231,17 +231,17 @@ function laplace_matrix(network)
     return K*K'
 end
 
-function weighted_laplace_matrix(network) # TODO test
+function weighted_laplace_matrix(network)
     K = incidence_matrix(network)
     B = reactance_matrix(network)
     return K*B*K'
 end
 
-function reactance_matrix(network) # TODO test
-    return diagm(network.lines[:x])
+function reactance_matrix(network)
+    return diagm(network.lines[:x].^(-1))
 end
 
-function ptdf_matrix(network) # TODO test
+function ptdf_matrix(network)
     K = incidence_matrix(network)
     B = reactance_matrix(network)
     L = weighted_laplace_matrix(network)

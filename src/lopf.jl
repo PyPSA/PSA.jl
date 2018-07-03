@@ -4,7 +4,7 @@ using JuMP
 include("auxilliaries.jl")
 
 
-function lopf(network, solver)
+function lopf(network, solver, formulation)
     # This function is organized as the following:
     #
     # 0.        Initialize model
@@ -39,8 +39,11 @@ function lopf(network, solver)
 
     calculate_dependent_values!(network)
     buses = network.buses
+    lines = network.lines
     reverse_busidx = rev_idx(buses)
     busidx = idx(buses)
+    reverse_lineidx = rev_idx(lines)
+    lineidx = idx(lines)
     N = nrow(network.buses)
     L = nrow(network.lines)
     T = nrow(network.snapshots) #normally snapshots
@@ -313,130 +316,151 @@ function lopf(network, solver)
         end)
 
 # --------------------------------------------------------------------------------------------------------
-# HIGHLY EXPERIMENTAL SECTION! NOT YET WORKING!
+# 6. + 7. power flow formulations
 
-## X. angle formulation
+    # a. angles formulation
+    if formulation == "angles"
 
-    @variable(m, theta[1:N]) # TODO maybe not free
+        # voltage angles
+        @variable(m, theta[1:N,1:T])
 
-    K = incidence_matrix(network)
-    L = weighted_laplace_matrix(network)
-    B = reactance_matrix(network)
+        K = incidence_matrix(network)
+        Lambda = weighted_laplace_matrix(network)
+        B = reactance_matrix(network)
 
-    # load data in correct order
-    loads = network.loads_t["p"][:,Symbol.(network.loads[:name])] # TODO what order? copied from cycle formulation
+        # load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-    # TODO find mistake which makes acdc problem infeasible
-    @constraint(m, voltages[n=1:N, t=1:T], (
+        @constraint(m, voltages[n=1:N, t=1:T], (
 
-            # p_i
+                  sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                      .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                == Lambda[n,:]' * theta[:,t] ))
+
+        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == (B * K' * theta[:,t])[l] )
+
+        @constraint(m, slack[t=1:T], theta[1,t] == 0 )
+
+    # b. cycles formulation
+    elseif formulation == "cycles"
+
+        #load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, balance[n=1:N, t=1:T], (
               sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+            + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
                   .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
             + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
             - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+            - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
             - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
             - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-            ==
+              == 0 ))
 
-            # L' * \theta
-            L[n,:]' * theta
+        # since cyclebasis is not yet supported in LightGraphs, use the pyimported
+        # netwrokx in order to define all cycles. The cycle_basis returns a list of
+        # cycles, indicating the connected buses. For each cycle the connecting branches
+        # and their directions (signs) have to be determined.
 
-               ))
-    for i in 1:N
-        println(voltages[i,1])
+        # Might be nessecary to loop over all subgraphs as
+        # for (sn, sub) in enumerate(weakly_connected_components(g))
+        #     g_sub = induced_subgraph(g, sub)[1]
+
+        append_idx_col!(lines)
+        (branches, var, attribute) = (lines, LN, :x)
+        cycles = get_cycles(network)
+        if ndims(cycles)<2
+            cycles = [cycle for cycle in cycles if length(cycle)>2]
+        else
+            cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
+        end
+        if length(cycles)>0
+            cycles_branch = Array{Int64,1}[]
+            directions = Array{Float64,1}[]
+            for cyc=1:length(cycles)
+                push!(cycles_branch,Int64[])
+                push!(directions,Float64[])
+                for bus=1:length(cycles[cyc])
+                    bus0 = cycles[cyc][bus]
+                    bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
+                    try
+                        push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
+                                    .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
+                        push!(directions[cyc], 1.)
+                    catch y
+                        if isa(y, BoundsError)
+                            push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
+                                            .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
+                            push!(directions[cyc], -1.)
+                        else
+                            return y
+                        end
+                    end
+                end
+            end
+            if attribute==:x
+                @constraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
+                        dot(directions[c] .* lines[cycles_branch[c], :x_pu],
+                            LN[cycles_branch[c],t]) == 0)
+            # elseif attribute==:r
+            #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
+            #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
+            end
+        end
+
+    # c. kirchhoff formulation
+    elseif formulation == "kirchhoff"
+        # TODO implement
+
+    # d. ptdf formulation
+    elseif formulation == "ptdf"
+
+        ptdf = ptdf_matrix(network)
+
+        #load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, flows[l=1:L,t=1:T],
+            sum( ptdf[l,n]
+               * (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                   + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                     .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                   + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                   - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                   - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                   - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                 )
+               for n in 1:N
+               ) == LN[l,t] )
+
+        @constraint(m, balance[t=1:T],
+        sum( (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+               + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                 .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+               + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+               - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+               - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+               - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+             ) for n in 1:N
+           ) == 0 )
+
+    else
+        println("The formulation $formulation is not implemented.")
     end
 
-    #@constraints(m, flows[l:1:L, t=1:T],
-
-#            LN == B * K' * theta
-#
-#               )
-
-## Y. PTDF formulation
-
-## Z. Kirchhoff formulation
-
-# --------------------------------------------------------------------------------------------------------
-
-## 6. define nodal balance constraint
-
-#    #load data in correct order
-#    loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-#
-#    @constraint(m, balance[n=1:N, t=1:T], (
-#          sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-#        + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
-#        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-#              .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-#        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-#
-#        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-#        - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
-#        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-#        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-#
-#          == 0 ))
-
-
-# --------------------------------------------------------------------------------------------------------
-
-# 7. set Kirchhoff Voltage Law constraint
-
-# since cyclebasis is not yet supported in LightGraphs, use the pyimported
-# netwrokx in order to define all cycles. The cycle_basis returns a list of
-# cycles, indicating the connected buses. For each cycle the connecting branches
-# and their directions (signs) have to be determined.
-
-# Might be nessecary to loop over all subgraphs as
-# for (sn, sub) in enumerate(weakly_connected_components(g))
-#     g_sub = induced_subgraph(g, sub)[1]
-
-#    append_idx_col!(lines)
-#    (branches, var, attribute) = (lines, LN, :x)
-#    cycles = get_cycles(network)
-#    if ndims(cycles)<2
-#        cycles = [cycle for cycle in cycles if length(cycle)>2]
-#    else
-#        cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
-#    end
-#    if length(cycles)>0
-#        cycles_branch = Array{Int64,1}[]
-#        directions = Array{Float64,1}[]
-#        for cyc=1:length(cycles)
-#            push!(cycles_branch,Int64[])
-#            push!(directions,Float64[])
-#            for bus=1:length(cycles[cyc])
-#                bus0 = cycles[cyc][bus]
-#                bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
-#                try
-#                    push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
-#                                .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
-#                    push!(directions[cyc], 1.)
-#                catch y
-#                    if isa(y, BoundsError)
-#                        push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
-#                                        .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
-#                        push!(directions[cyc], -1.)
-#                    else
-#                        return y
-#                    end
-#                end
-#            end
-#        end
-#        if attribute==:x
-#            @constraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
-#                    dot(directions[c] .* lines[cycles_branch[c], :x_pu],
-#                        LN[cycles_branch[c],t]) == 0)
-#        # elseif attribute==:r
-#        #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
-#        #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
-#        end
-#    end
-
-# END OF EXPERIMENTAL SECTION
 # --------------------------------------------------------------------------------------------------------
 
 # 8. set global_constraints

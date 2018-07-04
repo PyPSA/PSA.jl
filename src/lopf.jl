@@ -348,7 +348,7 @@ function lopf(network, solver, formulation)
 
 # --------------------------------------------------------------------------------------------------------
 # 6. + 7. power flow formulations
-    # TODO need validation / testing
+    # TODO need validation / testing (e.g. why is there a difference for 37 node example; why does kirchhoff formulation deviate?)
 
     println("Adding power flow formulation $formulation to the model.")
 

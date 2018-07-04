@@ -459,8 +459,10 @@ function lopf(network, solver, formulation)
         K = incidence_matrix(network)
         C = get_cycles(network)
 
-        n_cycles = length(C)
+        # adapting C to handle 1 cycle networks
+        ndims(C) == 2 ? C = [C] : nothing
 
+        n_cycles = length(C)
         cycles = zeros(Int64, L, n_cycles)
 
         for c=1:n_cycles
@@ -561,9 +563,7 @@ function lopf(network, solver, formulation)
                         + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                         )
 
-    println("Solving ...")
     status = solve(m)
-    println("Solved ...")
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -575,7 +575,6 @@ function lopf(network, solver, formulation)
         network.generators = generators
         network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
         network.generators = select_names(network.generators, orig_gen_order)
-
 
         orig_line_order = network.lines[:name]
         network.lines = lines

@@ -4,7 +4,7 @@ using JuMP
 include("auxilliaries.jl")
 
 
-function lopf(network, solver, formulation)
+function lopf(network, solver, formulation, objective, integer)
     # This function is organized as the following:
     #
     # 0.        Initialize model
@@ -140,6 +140,13 @@ function lopf(network, solver, formulation)
             [l=1:N_ext,t=1:T], LN_ext[l,t] >= -LN_s_nom[l]
     end)
 
+    # 2.5 add integer variables
+    if integer
+        @variable(m, LN_opt[l=1:N_ext], Int)
+        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] ==
+                    LN_opt[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
+    end
+
     LN = [LN_fix; LN_ext]
     lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
     fix_lines_b = (.!lines[:s_nom_extendable])
@@ -205,20 +212,25 @@ function lopf(network, solver, formulation)
     @variables m begin
        (0 <=  SU_dispatch_fix[s=1:N_fix,t=1:T] <=
                 (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_max_pu])[s])
+
         SU_dispatch_ext[s=1:N_ext,t=1:T] >= 0
+
         (0 <=  SU_store_fix[s=1:N_fix,t=1:T] <=
                  - (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_min_pu])[s])
+
         SU_store_ext[s=1:N_ext,t=1:T] >= 0
 
         SU_p_nom[s=1:N_ext] >= 0
 
-        0 <= SU_soc_fix[s=1:N_fix,t=1:T] <= (storage_units[fix_sus_b,:max_hours]
+        0 <= SU_soc_fix[s=1:N_fix,t=1:T] <= (storage_units[fix_sus_b,:max_hours] #  TODO [s]?
                                             .*storage_units[fix_sus_b,:p_nom])[s]
+
         SU_soc_ext[s=1:N_ext,t=1:T] >= 0
 
         0 <=  SU_spill_fix[s=1:N_fix,t=1:T] <= inflow[:,fix_sus_b][t,s]
+
         0 <=  SU_spill_ext[s=1:N_ext,t=1:T] <= inflow[:,ext_sus_b][t,s]
-        end
+    end
 
     # 4.4 set constraints for extendable storage_units
     println("-- 4.4")
@@ -300,9 +312,7 @@ function lopf(network, solver, formulation)
 
         0 <=  ST_spill_fix[l=1:N_fix,t=1:T] <= inflow[:,fix_stores_b][l=1:N_fix,t=1:T]
         0 <=  ST_spill_ext[l=1:N_fix,t=1:T] <= inflow[:,ext_stores_b][l=1:N_ext,t=1:T]
-        end
-
-
+    end
 
     # 5.4 set constraints for extendable stores
     println("-- 5.4")
@@ -331,17 +341,17 @@ function lopf(network, solver, formulation)
     @constraints(m, begin
             [s=is_cyclic_i,t=1], ST_soc[s,t] == (ST_soc[s,T]
                                         + stores[s,:efficiency_store] * ST_store[s,t]
-                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
+                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t] # TODO this is different to SU
                                         + inflow[t,s] - ST_spill[s,t])
 
             [s=not_cyclic_i,t=1], ST_soc[s,t] == (stores[s,:state_of_charge_initial]
                                         + stores[s,:efficiency_store] * ST_store[s,t]
-                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
+                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO this is different to SU
                                         + inflow[t,s] - ST_spill[s,t])
 
             [s=is_cyclic_i,t=2:T], ST_soc[s,t] == (ST_soc[s,t-1]
                                             + stores[s,:efficiency_store] * ST_store[s,t]
-                                            - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
+                                            - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO this is different to SU
                                             + inflow[t,s] - ST_spill[s,t])
 
         end)
@@ -535,7 +545,7 @@ function lopf(network, solver, formulation)
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
-        emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions]))
+        # emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions])) // unused
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
         @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
@@ -548,20 +558,66 @@ function lopf(network, solver, formulation)
 # 9. set objective function
     println("Adding objective to the model.")
 
-    @objective(m, Min,
-                        sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                        # consider already build infrastructur
-                        + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:]  )
+    # TODO catch if some components are not existing in network!
+    # TODO this objective consider the total cost (capex of existing + capex of additional) of extensible components!
+    # Should be only or extensions.
+    # Accurate as long as extensible components have 0 capacity at beginning!
+    if objective == "total"
+        @objective(m, Min,
+                              sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                            + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:] )
+                            + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
-                        + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-                        + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
+                            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
+                            + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
 
-                        + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
-                        + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
+                            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
+                            + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
 
-                        + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
-                        + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-                        )
+                            + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
+                            + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
+
+                            + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
+                            + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+                    )
+    elseif objective == "extensions"
+        # not working yet!
+        # TODO modify objective function such that only cost of extensions and opex is included
+        # reducing capacity saves money; in reality would increase cost
+        @objective(m, Min,
+                              sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                            + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:] - generators[ext_gens_b,:p_nom])
+
+                            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:] - lines[ext_lines_b,:s_nom])
+
+                            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:] - links[ext_links_b,:p_nom])
+
+                            + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:] - storage_units[ext_sus_b,:p_nom])
+
+                            + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:] - stores[ext_stores_b,:e_nom])
+                    )
+    else # TODO original objective; delete when other objectives tested.
+        @objective(m, Min,
+                              sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                            + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:]  )
+
+                            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
+
+                            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
+
+                            + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
+
+                            + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
+
+                    )
+    end
+
 
     status = solve(m)
 

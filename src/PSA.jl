@@ -5,6 +5,7 @@ using DataFrames, CSV, LightGraphs
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
 # include("auxilliaries.jl") already in lopf
+#include("lopf.jl")
 include("lopf.jl")
 
 mutable struct network_mutable
@@ -56,13 +57,13 @@ function Network(
             [:name, :f_nom, :r_per_length, :x_per_length, :c_per_length,
             :i_nom, :mounting, :cross_section, :references]),
 
-    lines = DataFrame(repeat([Bool[]], outer=33),
+    lines = DataFrame(repeat([Bool[]], outer=34),
             [:name, :bus0, :bus1, :type, :x, :r, :g, :b,
             :s_nom, :s_nom_extendable, :s_nom_min, :s_nom_max,
             :s_max_pu, :capital_cost, :length, :terrain_factor, :num_parallel,
             :v_ang_min, :v_ang_max, :sub_network, :p0, :q0, :p1, :q1,
             :x_pu, :r_pu, :g_pu, :b_pu, :x_pu_eff, :r_pu_eff,
-            :s_nom_opt, :mu_lower, :mu_upper]),
+            :s_nom_opt, :mu_lower, :mu_upper, :s_nom_step]),
 
     links = DataFrame(repeat([Bool[]], outer=21),
             [:name, :bus0, :bus1, :type, :efficiency, :p_nom, :p_nom_extendable,

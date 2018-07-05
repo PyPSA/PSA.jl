@@ -148,8 +148,8 @@ function calculate_dependent_values!(network)
 
     # lines
     network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
-    defaults = [(:s_nom_extendable, false), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0)]
+    defaults = [(:s_nom_extendable, true), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
+                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_step, 100)] # TODO set reasonable default value
     for (col, default) in defaults
         set_default(network.lines, col, default)
     end

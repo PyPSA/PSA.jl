@@ -4,7 +4,7 @@ using JuMP
 include("auxilliaries.jl")
 
 
-function lopf(network, solver, formulation, objective, integer)
+function lopf(network, solver, formulation, objective, investment)
     # This function is organized as the following:
     #
     # 0.        Initialize model
@@ -141,10 +141,65 @@ function lopf(network, solver, formulation, objective, integer)
     end)
 
     # 2.5 add integer variables
-    if integer
-        @variable(m, LN_opt[l=1:N_ext], Int)
-        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] ==
-                    LN_opt[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
+    if investment == "int"
+        @variable(m, LN_opt_inv[l=1:N_ext], Int)
+        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
+
+    elseif investment == "bin_abs"
+        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO choose bigM default
+        @variable(m, LN_opt[l=1:N_ext], Bin)
+        @variable(m, LN_inv[l=1:N_ext])
+        @constraints m begin
+            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:abs_ext_min][l] <= LN_inv[l]
+            [l=1:N_ext], - bigM[l] * LN_opt[l] <= LN_inv[l]
+            [l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
+            [l=1:N_ext], LN_s_nom[l] == LN_inv[l] + lines[ext_lines_b,:s_nom][l]
+        end
+
+    elseif investment == "convexhull"
+        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO choose bigM default
+        @variable(m, LN_opt[l=1:N_ext], Bin)
+        @variable(m, LN_inv[l=1:N_ext])
+        @variable(m, LN_inv_1[l=1:N_ext])
+        @variable(m, LN_inv_2[l=1:N_ext])
+        #@constraint(m, [l=1:N_ext], LN_inv[l] = LN_inv_1[l] + LN_inv_2[l])
+        @constraints m begin
+            [l=1:N_ext], 0 <= LN_inv_1[l]
+            [l=1:N_ext], LN_inv_1[l] <= bigM[l] * (1-LN_opt[l])
+            [l=1:N_ext], 0 <= LN_inv_2[l]
+            [l=1:N_ext], LN_inv_2[l] <= bigM[l] * LN_opt[l]
+        end
+        @constraints m begin
+            [l=1:N_ext], (1-LN_opt[l]) * lines[ext_lines_b,:abs_ext_min][l] <= LN_inv_1[l]
+            [l=1:N_ext], 0 == LN_inv_2[l]
+            [l=1:N_ext], LN_s_nom[l] == LN_inv_1[l] + LN_inv_2[l] + lines[ext_lines_b,:s_nom][l]
+        end
+
+    # TODO requires non infinite s_nom_max values to work properly (and make sense):
+    # current workaround: choose very high s_nom_max as default and set rel_ext_min to 0.0
+    # this way minimum expansion constraint is ignored
+    elseif investment == "bin_rel"
+
+        # TODO catch infinite s_nom_max lines, assigning new values in DataFrame not working yet
+        s_nom_max = lines[ext_lines_b,:s_nom_max]
+        rel_ext_min = lines[ext_lines_b,:rel_ext_min]
+        for l=1:N_ext
+            if s_nom_max[l] == Inf
+                s_nom_max[l] = 1e6 # TODO not working ugly workaround
+                rel_ext_min[l] = 0.0
+            end
+        end
+
+        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO choose bigM default
+        @variable(m, LN_opt[l=1:N_ext], Bin)
+        @variable(m, LN_inv[l=1:N_ext])
+        @constraints m begin
+            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) * rel_ext_min[l] <= LN_inv[l]
+            [l=1:N_ext], - bigM[l] * LN_opt[l] <= LN_inv[l]
+            [l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
+            [l=1:N_ext], LN_s_nom[l] == LN_inv[l]* ( s_nom_max[l]-lines[ext_lines_b,:s_nom][l] ) + lines[ext_lines_b,:s_nom][l]
+        end
+
     end
 
     LN = [LN_fix; LN_ext]
@@ -625,6 +680,11 @@ function lopf(network, solver, formulation, objective, integer)
 
 # 10. extract optimisation results
     if status==:Optimal
+
+        println(LN_opt)
+        println(LN_inv)
+        println(LN_s_nom)
+
         orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])
         generators[ext_gens_b,:p_nom_opt] = getvalue(gen_p_nom)

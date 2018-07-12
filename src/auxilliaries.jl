@@ -1,8 +1,5 @@
 using LightGraphs
-using PyCall
-const networkx = PyNULL()
-copy!(networkx, pyimport("networkx" ))
-
+using LightGraphs.SimpleGraphs
 
 function time_dependent_components(network)
     fields = String.(fieldnames(network))
@@ -14,6 +11,7 @@ function time_dependent_components(network)
     end
     Symbol.(components)
 end
+
 
 function static_components(network)
     fields = String.(fieldnames(network))
@@ -208,14 +206,6 @@ function to_graph(network)
     return g
 end
 
-# function to_graphx(network)
-#     busidx = idx(network.buses)
-#     g = networkx[:Graph]()
-#     g[:add_nodes_from](busidx)
-#     g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
-#     return g
-# end
-
 function incidence_matrix(network)
     busidx = idx(network.buses)
     lines = network.lines
@@ -252,12 +242,11 @@ end
 
 function get_cycles(network)
     busidx = idx(network.buses)
-    g = networkx[:Graph]()
-    g[:add_nodes_from](busidx)
-    g[:add_edges_from]([(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)])
-    networkx[:cycle_basis](g)
+    elist = [(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)]
+    g = SimpleGraph(length(busidx))
+    for e in elist add_edge!(g,e) end
+    cycle_basis(g)
 end
-
 
 function row_sum(df, row_id)
     if length(df[row_id,:]) == 0
@@ -266,3 +255,79 @@ function row_sum(df, row_id)
         return sum([df[row_id,i] for i in 1:length(df[row_id,:])])
     end
 end
+
+# ! This was submitted as a PR to LightGraphs.jl and will be included in future versions. https://github.com/JuliaGraphs/LightGraphs.jl/pull/929
+# TODO: remove and use LightGraph.jl version once included.
+# Code in this file inspired by NetworkX.
+
+"""
+    cycle_basis(g, root=nothing)
+
+Return a list of cycles which form a basis for cycles of graph `g`, optionally starting at node `root`.
+
+A basis for cycles of a network is a minimal collection of
+cycles such that any cycle in the network can be written
+as a sum of cycles in the basis.  Here summation of cycles
+is defined as "exclusive or" of the edges. Cycle bases are
+useful, e.g. when deriving equations for electric circuits
+using Kirchhoff's Laws.
+
+Example:
+```jldoctest
+julia> nlist = [1,2,3,4,5]
+julia> elist = [(1,2),(2,3),(2,4),(3,4),(4,1),(1,5)]
+julia> g = SimpleGraph(length(nlist))
+julia> for e in elist add_edge!(g, e) end
+julia> cycle_basis(g)
+2-element Array{Array{Int64,1},1}:
+ [2, 3, 4]
+ [2, 1, 3]
+```
+
+### References
+* Paton, K. An algorithm for finding a fundamental set of cycles of a graph. Comm. ACM 12, 9 (Sept 1969), 514-518. [https://dl.acm.org/citation.cfm?id=363232]
+"""
+function cycle_basis(g::AbstractSimpleGraph, root=nothing)
+    gnodes = Set(vertices(g))
+    cycles = Vector{Vector{eltype(g)}}()
+    while !isempty(gnodes)
+        if root == nothing
+            root = pop!(gnodes)
+        end
+        stack = [root]
+        pred = Dict(root => root)
+        keys_pred = Set(root)
+        used = Dict(root => [])
+        keys_used = Set(root)
+        while !isempty(stack)
+            z = pop!(stack)
+            zused = used[z]
+            for nbr in neighbors(g,z)
+                if !in(nbr, keys_used)
+                    pred[nbr] = z
+                    push!(keys_pred, nbr)
+                    push!(stack,nbr)
+                    used[nbr] = [z]
+                    push!(keys_used, nbr)
+                elseif nbr == z
+                    push!(cycles, [z])
+                elseif !in(nbr, zused)
+                    pn = used[nbr]
+                    cycle = [nbr,z]
+                    p = pred[z]
+                    while !in(p, pn)
+                        push!(cycle, p)
+                        p = pred[p]
+                    end
+                    push!(cycle,p)
+                    push!(cycles,cycle)
+                    push!(used[nbr], z)
+                end
+            end
+        end  
+        setdiff!(gnodes,keys_pred)
+        root = nothing
+    end
+    return cycles
+end
+

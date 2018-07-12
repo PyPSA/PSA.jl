@@ -4,8 +4,6 @@ using DataFrames, CSV, LightGraphs
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
-# include("auxilliaries.jl") already in lopf
-#include("lopf.jl")
 include("lopf.jl")
 
 mutable struct network_mutable

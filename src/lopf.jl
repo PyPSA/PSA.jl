@@ -1,8 +1,6 @@
 using JuMP
 
-
 include("auxilliaries.jl")
-
 
 function lopf(network, solver, formulation, objective, investment)
     # This function is organized as the following:
@@ -680,10 +678,6 @@ function lopf(network, solver, formulation, objective, investment)
 
 # 10. extract optimisation results
     if status==:Optimal
-
-        println(LN_opt)
-        println(LN_inv)
-        println(LN_s_nom)
 
         orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])

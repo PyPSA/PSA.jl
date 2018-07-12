@@ -144,7 +144,7 @@ function lopf(network, solver, formulation, objective, investment)
         @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
 
     elseif investment == "bin_abs"
-        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO choose bigM default
+        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO: choose bigM default
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @constraints m begin
@@ -155,7 +155,7 @@ function lopf(network, solver, formulation, objective, investment)
         end
 
     elseif investment == "convexhull"
-        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO choose bigM default
+        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO: choose bigM default
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @variable(m, LN_inv_1[l=1:N_ext])
@@ -173,22 +173,22 @@ function lopf(network, solver, formulation, objective, investment)
             [l=1:N_ext], LN_s_nom[l] == LN_inv_1[l] + LN_inv_2[l] + lines[ext_lines_b,:s_nom][l]
         end
 
-    # TODO requires non infinite s_nom_max values to work properly (and make sense):
+    # TODO: requires non infinite s_nom_max values to work properly (and make sense):
     # current workaround: choose very high s_nom_max as default and set rel_ext_min to 0.0
     # this way minimum expansion constraint is ignored
     elseif investment == "bin_rel"
 
-        # TODO catch infinite s_nom_max lines, assigning new values in DataFrame not working yet
+        # TODO: catch infinite s_nom_max lines, assigning new values in DataFrame not working yet
         s_nom_max = lines[ext_lines_b,:s_nom_max]
         rel_ext_min = lines[ext_lines_b,:rel_ext_min]
         for l=1:N_ext
             if s_nom_max[l] == Inf
-                s_nom_max[l] = 1e6 # TODO not working ugly workaround
+                s_nom_max[l] = 1e6 # TODO: not working ugly workaround
                 rel_ext_min[l] = 0.0
             end
         end
 
-        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO choose bigM default
+        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO: choose bigM default
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @constraints m begin
@@ -275,7 +275,7 @@ function lopf(network, solver, formulation, objective, investment)
 
         SU_p_nom[s=1:N_ext] >= 0
 
-        0 <= SU_soc_fix[s=1:N_fix,t=1:T] <= (storage_units[fix_sus_b,:max_hours] #  TODO [s]?
+        0 <= SU_soc_fix[s=1:N_fix,t=1:T] <= (storage_units[fix_sus_b,:max_hours] #  TODO: [s]?
                                             .*storage_units[fix_sus_b,:p_nom])[s]
 
         SU_soc_ext[s=1:N_ext,t=1:T] >= 0
@@ -394,24 +394,24 @@ function lopf(network, solver, formulation, objective, investment)
     @constraints(m, begin
             [s=is_cyclic_i,t=1], ST_soc[s,t] == (ST_soc[s,T]
                                         + stores[s,:efficiency_store] * ST_store[s,t]
-                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t] # TODO this is different to SU
+                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t] # TODO: this is different to SU
                                         + inflow[t,s] - ST_spill[s,t])
 
             [s=not_cyclic_i,t=1], ST_soc[s,t] == (stores[s,:state_of_charge_initial]
                                         + stores[s,:efficiency_store] * ST_store[s,t]
-                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO this is different to SU
+                                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO: this is different to SU
                                         + inflow[t,s] - ST_spill[s,t])
 
             [s=is_cyclic_i,t=2:T], ST_soc[s,t] == (ST_soc[s,t-1]
                                             + stores[s,:efficiency_store] * ST_store[s,t]
-                                            - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO this is different to SU
+                                            - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO: this is different to SU
                                             + inflow[t,s] - ST_spill[s,t])
 
         end)
 
 # --------------------------------------------------------------------------------------------------------
 # 6. + 7. power flow formulations
-    # TODO need validation / testing (e.g. why is there a difference for 37 node example; why does kirchhoff formulation deviate?)
+    # TODO: need validation / testing (e.g. why is there a difference for 37 node example; why does kirchhoff formulation deviate?)
 
     println("Adding power flow formulation $formulation to the model.")
 
@@ -611,8 +611,8 @@ function lopf(network, solver, formulation, objective, investment)
 # 9. set objective function
     println("Adding objective to the model.")
 
-    # TODO catch if some components are not existing in network!
-    # TODO this objective consider the total cost (capex of existing + capex of additional) of extensible components!
+    # TODO: catch if some components are not existing in network!
+    # TODO: this objective consider the total cost (capex of existing + capex of additional) of extensible components!
     # Should be only or extensions.
     # Accurate as long as extensible components have 0 capacity at beginning!
     if objective == "total"
@@ -637,7 +637,7 @@ function lopf(network, solver, formulation, objective, investment)
                     )
     elseif objective == "extensions"
         # not working yet!
-        # TODO modify objective function such that only cost of extensions and opex is included
+        # TODO: modify objective function such that only cost of extensions and opex is included
         # reducing capacity saves money; in reality would increase cost
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
@@ -653,7 +653,7 @@ function lopf(network, solver, formulation, objective, investment)
                             + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
                             + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:] - stores[ext_stores_b,:e_nom])
                     )
-    else # TODO original objective; delete when other objectives tested.
+    else # TODO: original objective; delete when other objectives tested.
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                             + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:]  )

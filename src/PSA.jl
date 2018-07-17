@@ -217,6 +217,4 @@ function export_network(network, folder)
     end
 end
 
-
-
 end

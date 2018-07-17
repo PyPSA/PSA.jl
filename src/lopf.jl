@@ -2,7 +2,8 @@ using JuMP
 
 include("auxilliaries.jl")
 
-function lopf(network, solver, formulation, objective, investment)
+function lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="")
+    
     # This function is organized as the following:
     #
     # 0.        Initialize model
@@ -16,21 +17,13 @@ function lopf(network, solver, formulation, objective, investment)
     # 6.        set Kirchhoff's Current Law (nodal balance)
     # 7.        set Kirchhoff Voltage Law
     # 8.        set global constraints
-    # 9.        objective function and solving
-    # 10.       extract results
+    # 9.        give objective function and solve problem
+    # 10.       extract results and return
 
     # Conventions:
     #   - all variable names start with capital letters
-    #   - Additional capital words are N (number of buses), T (number of snapshots)
-    #       and N_* defining the nuber of considered variables added to the model.
-
-    #solver is e.g.
-
-    #using Gurobi
-    #solver = GurobiSolver(Method=1,Threads=2)
-
-    #using Clp
-    #solver = ClpSolver()
+    #   - Additional capital words are N (number of buses), T (number of snapshots), L (number of lines)
+    #       and N_*/L_* defining the nuber of considered variables added to the model.
 
     println("Creating model.")
     m = Model(solver=solver)
@@ -53,14 +46,14 @@ function lopf(network, solver, formulation, objective, investment)
     println("Adding generators to the model.")
 
     # 1.1 set different generator types
-    println("-- 1.1")
+    println("-- 1.1 set different generator types")
     generators = network.generators
     fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
     ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
     com_gens_b = convert(BitArray, generators[:commitable])
 
     # 1.2 fix bounds for iterating
-    println("-- 1.2")
+    println("-- 1.2 fix bounds for iterating")
     N_fix = sum(fix_gens_b)
     N_ext = sum(ext_gens_b)
     N_com = sum(com_gens_b)
@@ -73,7 +66,7 @@ function lopf(network, solver, formulation, objective, investment)
     p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
 
     # 1.3a add non-extendable generator variables to the model
-    println("-- 1.3a")
+    println("-- 1.3a add non-extendable generator variables to the model")
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=fix_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)
     p_nom = network.generators[fix_gens_b,:p_nom]
@@ -82,7 +75,7 @@ function lopf(network, solver, formulation, objective, investment)
 
 
     # 1.3b add extendable generator variables to the model
-    println("-- 1.3b")
+    println("-- 1.3b add extendable generator variables to the model")
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
     p_nom_min = network.generators[ext_gens_b,:p_nom_min]
@@ -106,25 +99,24 @@ function lopf(network, solver, formulation, objective, investment)
     com_gens_b = convert(BitArray, generators[:commitable])
 
 
-
 # --------------------------------------------------------------------------------------------------------
 
 # 2. add all lines to the model
     println("Adding lines to the model.")
 
     # 2.1 set different lines types
-    println("-- 2.1")
+    println("-- 2.1 set different lines types")
     lines = network.lines
     fix_lines_b = (.!lines[:s_nom_extendable])
     ext_lines_b = .!fix_lines_b
 
     # 2.2 iterator bounds
-    println("-- 2.2")
+    println("-- 2.2 iterator bounds")
     N_fix = sum(fix_lines_b)
     N_ext = sum(ext_lines_b)
 
     # 2.3 add variables
-    println("-- 2.3")
+    println("-- 2.3 add variables")
     @variables m begin
         -lines[fix_lines_b,:s_nom][l]  <=  LN_fix[l=1:N_fix,t=1:T] <= lines[fix_lines_b,:s_nom][l]
         LN_ext[l=1:N_ext,t=1:T]
@@ -132,19 +124,23 @@ function lopf(network, solver, formulation, objective, investment)
     end
 
     # 2.4 add line constraint for extendable lines
-    println("-- 2.4")
+    println("-- 2.4 add line constraint for extendable lines")
     @constraints(m, begin
             [l=1:N_ext,t=1:T], LN_ext[l,t] <=  LN_s_nom[l]
             [l=1:N_ext,t=1:T], LN_ext[l,t] >= -LN_s_nom[l]
     end)
 
-    # 2.5 add integer variables
-    if investment == "int"
+    # 2.5 add integer variables if applicable
+    println("-- 2.5 add integer variables if applicable")
+
+    bigM_default = 1e6 # TODO: choose bigM default
+
+    if investment_type == "integer"
         @variable(m, LN_opt_inv[l=1:N_ext], Int)
         @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
 
-    elseif investment == "bin_abs"
-        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO: choose bigM default
+    elseif investment_type == "binary_absolute"
+        bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @constraints m begin
@@ -154,8 +150,8 @@ function lopf(network, solver, formulation, objective, investment)
             [l=1:N_ext], LN_s_nom[l] == LN_inv[l] + lines[ext_lines_b,:s_nom][l]
         end
 
-    elseif investment == "convexhull"
-        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO: choose bigM default
+    elseif investment_type == "binary_absolute_convexhull"
+        bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @variable(m, LN_inv_1[l=1:N_ext])
@@ -176,19 +172,19 @@ function lopf(network, solver, formulation, objective, investment)
     # TODO: requires non infinite s_nom_max values to work properly (and make sense):
     # current workaround: choose very high s_nom_max as default and set rel_ext_min to 0.0
     # this way minimum expansion constraint is ignored
-    elseif investment == "bin_rel"
+    elseif investment_type == "binary_relative"
 
-        # TODO: catch infinite s_nom_max lines, assigning new values in DataFrame not working yet
+        # TODO: catch infinite s_nom_max lines
         s_nom_max = lines[ext_lines_b,:s_nom_max]
         rel_ext_min = lines[ext_lines_b,:rel_ext_min]
         for l=1:N_ext
             if s_nom_max[l] == Inf
-                s_nom_max[l] = 1e6 # TODO: not working ugly workaround
+                s_nom_max[l] = 1e6 # TODO: not working; assigning new values in DataFrame not working yet; ugly workaround
                 rel_ext_min[l] = 0.0
             end
         end
 
-        bigM = min.(lines[ext_lines_b,:s_nom_max],1e6) # TODO: choose bigM default
+        bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default) 
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @constraints m begin
@@ -211,18 +207,18 @@ function lopf(network, solver, formulation, objective, investment)
     println("Adding links to the model.")
 
     # 3.1 set different link types
-    println("-- 3.1")
+    println("-- 3.1 set different link types")
     links = network.links
     fix_links_b = .!links[:p_nom_extendable]
     ext_links_b = .!fix_links_b
 
     # 3.2 iterator bounds
-    println("-- 3.2")
+    println("-- 3.2 iterator bounds")
     N_fix = sum(fix_links_b)
     N_ext = sum(ext_links_b)
 
     #  3.3 set link variables
-    println("-- 3.3")
+    println("-- 3.3 set link variables")
     @variables m begin
        ((links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l]  <=  LK_fix[l=1:N_fix,t=1:T]
                 <= (links[fix_links_b, :p_nom].*links[fix_links_b, :p_max_pu])[l])
@@ -231,7 +227,7 @@ function lopf(network, solver, formulation, objective, investment)
     end
 
     # 3.4 set constraints for extendable links
-    println("-- 3.4")
+    println("-- 3.4 set constraints for extendable links")
     @constraints(m, begin
     [l=1:N_ext,t=1:T], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
     [l=1:N_ext,t=1:T], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
@@ -243,11 +239,12 @@ function lopf(network, solver, formulation, objective, investment)
     ext_links_b = .!fix_links_b
 
 # --------------------------------------------------------------------------------------------------------
+
 # 4. define storage_units
     println("Adding storage units to the model.")
 
     # 4.1 set different storage_units types
-    println("-- 4.1")
+    println("-- 4.1 set different storage_units types")
     storage_units = network.storage_units
     fix_sus_b = .!storage_units[:p_nom_extendable]
     ext_sus_b = .!fix_sus_b
@@ -255,13 +252,13 @@ function lopf(network, solver, formulation, objective, investment)
     inflow = get_switchable_as_dense(network, "storage_units", "inflow")
 
     # 4.2 iterator bounds
-    println("-- 4.2")
+    println("-- 4.2 iterator bounds")
     N_fix = sum(fix_sus_b)
     N_ext = sum(ext_sus_b)
     N_sus = nrow(storage_units)
 
     #  4.3 set variables
-    println("-- 4.3")
+    println("-- 4.3 set variables")
     @variables m begin
        (0 <=  SU_dispatch_fix[s=1:N_fix,t=1:T] <=
                 (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_max_pu])[s])
@@ -286,7 +283,7 @@ function lopf(network, solver, formulation, objective, investment)
     end
 
     # 4.4 set constraints for extendable storage_units
-    println("-- 4.4")
+    println("-- 4.4 set constraints for extendable storage_units")
 
     @constraints(m, begin
             [s=1:N_ext,t=1:T], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
@@ -295,7 +292,7 @@ function lopf(network, solver, formulation, objective, investment)
     end)
 
     # 4.5 set charging constraint
-    println("-- 4.5")
+    println("-- 4.5 set charging constraint")
     SU_dispatch = [SU_dispatch_fix; SU_dispatch_ext]
     SU_store = [SU_store_fix; SU_store_ext]
     SU_soc = [SU_soc_fix; SU_soc_ext]
@@ -331,8 +328,8 @@ function lopf(network, solver, formulation, objective, investment)
 # 5. define stores
     println("Adding stores to the model.")
 
-# 5.1 set different stores types
-    println("-- 5.1")
+    # 5.1 set different stores types
+    println("-- 5.1 set different stores types")
     stores = network.stores
 
     fix_stores_b = .!stores[:e_nom_extendable]
@@ -341,14 +338,14 @@ function lopf(network, solver, formulation, objective, investment)
     inflow = get_switchable_as_dense(network, "stores", "inflow")
 
     # 5.2 iterator bounds
-    println("-- 5.2")
+    println("-- 5.2 iterator bounds")
     N_fix = sum(fix_stores_b)
     N_ext = sum(ext_stores_b)
     N_st = N_fix + N_ext
 
 
     #  5.3 set variables
-    println("-- 5.3")
+    println("-- 5.3 set variables")
     @variables m begin
        (0 <=  ST_dispatch_fix[s=1:N_fix,t=1:T] <=
                 (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_max_pu])[s])
@@ -368,7 +365,7 @@ function lopf(network, solver, formulation, objective, investment)
     end
 
     # 5.4 set constraints for extendable stores
-    println("-- 5.4")
+    println("-- 5.4 set constraints for extendable stores")
 
     @constraints(m, begin
             [s=1:N_ext,t=1:T], ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
@@ -377,7 +374,7 @@ function lopf(network, solver, formulation, objective, investment)
     end)
 
     # 5.5 set charging constraint
-    println("-- 5.5")
+    println("-- 5.5 set charging constraint")
     ST_dispatch = [ST_dispatch_fix; ST_dispatch_ext]
     ST_store = [ST_store_fix; ST_store_ext]
     ST_soc = [ST_soc_fix; ST_soc_ext]
@@ -410,6 +407,7 @@ function lopf(network, solver, formulation, objective, investment)
         end)
 
 # --------------------------------------------------------------------------------------------------------
+
 # 6. + 7. power flow formulations
     # TODO: need validation / testing (e.g. why is there a difference for 37 node example; why does kirchhoff formulation deviate?)
 
@@ -465,12 +463,7 @@ function lopf(network, solver, formulation, objective, investment)
 
               == 0 ))
 
-        # since cyclebasis is not yet supported in LightGraphs, use the pyimported
-        # netwrokx in order to define all cycles. The cycle_basis returns a list of
-        # cycles, indicating the connected buses. For each cycle the connecting branches
-        # and their directions (signs) have to be determined.
-
-        # Might be nessecary to loop over all subgraphs as
+        # TODO: Might be nessecary to loop over all subgraphs as
         # for (sn, sub) in enumerate(weakly_connected_components(g))
         #     g_sub = induced_subgraph(g, sub)[1]
 
@@ -522,7 +515,7 @@ function lopf(network, solver, formulation, objective, investment)
         K = incidence_matrix(network)
         C = get_cycles(network)
 
-        # adapting C to handle 1 cycle networks
+        # adapting cycle basis C to handle 1 cycle networks
         ndims(C) == 2 ? C = [C] : nothing
 
         n_cycles = length(C)
@@ -592,7 +585,7 @@ function lopf(network, solver, formulation, objective, investment)
 # --------------------------------------------------------------------------------------------------------
 
 # 8. set global_constraints
-# only for co2_emissions till now
+    # only for co2_emissions till now
     println("Adding global constraints to the model.")
 
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
@@ -611,10 +604,9 @@ function lopf(network, solver, formulation, objective, investment)
 # 9. set objective function
     println("Adding objective to the model.")
 
-    # TODO: catch if some components are not existing in network!
-    # TODO: this objective consider the total cost (capex of existing + capex of additional) of extensible components!
-    # Should be only or extensions.
-    # Accurate as long as extensible components have 0 capacity at beginning!
+    # TODO: Catch if some components are not existing in network.
+
+    # TODO: This objective consider the total cost (capex of existing + capex of additional) of extensible components!
     if objective == "total"
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
@@ -636,9 +628,9 @@ function lopf(network, solver, formulation, objective, investment)
                             + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
                     )
     elseif objective == "extensions"
-        # not working yet!
-        # TODO: modify objective function such that only cost of extensions and opex is included
-        # reducing capacity saves money; in reality would increase cost
+        # !!! not working yet !!!
+        # TODO: Modify objective function such that only cost of extensions and opex is included.
+        # Reducing existing capacity currently saves money. This is wrong!
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                             + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:] - generators[ext_gens_b,:p_nom])
@@ -725,4 +717,5 @@ function lopf(network, solver, formulation, objective, investment)
         println("Reduce cost to $(m.objVal)")
     end
     return m
+
 end

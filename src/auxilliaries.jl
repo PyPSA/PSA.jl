@@ -239,7 +239,7 @@ function ptdf_matrix(network)
     B = reactance_matrix(network)
     L = weighted_laplace_matrix(network)
     H = B * K' * pinv(L)
-    return H .- H[:,1] # TODO why minus H[:,1]?
+    return H .- H[:,1]
 end
 
 function get_cycles(network)

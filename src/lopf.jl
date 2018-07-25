@@ -139,7 +139,7 @@ function lopf(network, solver; formulation::String="angles", objective::String="
         @variable(m, LN_opt_inv[l=1:N_ext], Int)
         @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
 
-    elseif investment_type == "binary_absolute"
+    elseif investment_type == "binary_absolute_bigm"
         bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
@@ -409,7 +409,9 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 # --------------------------------------------------------------------------------------------------------
 
 # 6. + 7. power flow formulations
-    # TODO: need validation / testing (e.g. why is there a difference for 37 node example; why does kirchhoff formulation deviate?)
+
+    # TODO: introduce bilinearity of changing reactances
+    # TODO: check power flow for DC networks
 
     println("Adding power flow formulation $formulation to the model.")
 
@@ -443,8 +445,8 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 
         @constraint(m, slack[t=1:T], theta[1,t] == 0 )
 
-    # b. cycles formulation
-    elseif formulation == "cycles"
+    # b. kirchhoff formulation
+    elseif formulation == "kirchhoff"
 
         #load data in correct order
         loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
@@ -509,42 +511,7 @@ function lopf(network, solver; formulation::String="angles", objective::String="
             end
         end
 
-    # c. kirchhoff formulation
-    elseif formulation == "kirchhoff"
-
-        K = incidence_matrix(network)
-        C = get_cycles(network)
-
-        # adapting cycle basis C to handle 1 cycle networks
-        ndims(C) == 2 ? C = [C] : nothing
-
-        n_cycles = length(C)
-        cycles = zeros(Int64, L, n_cycles)
-
-        for c=1:n_cycles
-            for l in C[c]
-                cycles[l,c] = 1
-            end
-        end
-
-        #load data in correct order
-        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-        @constraint(m, kcl[n=1:N,t=1:T],
-            (    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-               + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                 .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-               + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-               - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-               - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-               - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-             ) == K[n,:]' * LN[:,t] )
-
-        @constraint(m, kvl[c=1:n_cycles,t=1:T],
-            sum(cycles[l,c] * network.lines[:x][l] * LN[l,t] for l=1:L) == 0 )
-
-    # d. ptdf formulation
+    # c. ptdf formulation
     elseif formulation == "ptdf"
 
         ptdf = ptdf_matrix(network)

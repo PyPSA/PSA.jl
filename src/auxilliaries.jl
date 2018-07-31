@@ -150,7 +150,7 @@ function calculate_dependent_values!(network)
     network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
     defaults = [(:s_nom_extendable, true), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
                 (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_step, 100),
-                (:abs_ext_min, 1000), (:rel_ext_min, 0.1)] # TODO set reasonable default value for :s_nom_step, :abs_ext_min, :rel_ext_min
+                (:x_step, 10000.0), (:s_nom_ext_min, 1000)] # TODO: set reasonable default value for :s_nom_step, :abs_ext_min, :rel_ext_min, x_step=0.2?
     for (col, default) in defaults
         set_default(network.lines, col, default)
     end
@@ -226,17 +226,17 @@ end
 
 function weighted_laplace_matrix(network)
     K = incidence_matrix(network)
-    B = reactance_matrix(network)
+    B = susceptance_matrix(network)
     return K*B*K'
 end
 
-function reactance_matrix(network)
+function susceptance_matrix(network)
     return diagm(network.lines[:x].^(-1))
 end
 
 function ptdf_matrix(network)
     K = incidence_matrix(network)
-    B = reactance_matrix(network)
+    B = susceptance_matrix(network)
     L = weighted_laplace_matrix(network)
     H = B * K' * pinv(L)
     return H .- H[:,1]
@@ -250,6 +250,50 @@ function get_cycles(network)
     cycle_basis(g)
 end
 
+# following Taylor2015a
+# TODO: rename
+function get_line_paths(network)
+    busidx = idx(network.buses)
+
+    # create elist only for lines with s_nom > 0
+    elist = Tuple{Int64,Int64}[]
+    for l in eachrow(network.lines)
+        if l[:s_nom] > 0
+            push!(elist, (busidx[l[:bus0]], busidx[l[:bus1]]))
+        end
+    end
+
+    g = SimpleGraph(length(busidx))
+    for e in elist add_edge!(g,e) end
+
+    # set weights
+    weights = zeros(nrow(network.lines), nrow(network.lines))
+    for l in eachrow(network.lines)
+        weights[busidx[l[:bus0]],busidx[l[:bus1]]] = l[:s_nom_step] * l[:x_step]
+        weights[busidx[l[:bus1]],busidx[l[:bus0]]] = l[:s_nom_step] * l[:x_step]
+    end
+
+    line_paths = Array{Int64,1}[]
+    for l in eachrow(network.lines)
+
+        path_lg = a_star(g, busidx[l[:bus0]], busidx[l[:bus1]], weights)
+        path = [(p.src,p.dst) for p in path_lg]
+    
+        lines_on_path = Int64[]
+        for p in path
+            for i=1:length(elist)
+                if length(union(p, elist[i])) == length(p)
+                    push!(lines_on_path, i)
+                end
+            end
+        end
+
+        push!(line_paths, lines_on_path)
+    end
+
+    return line_paths
+end
+
 function row_sum(df, row_id)
     if length(df[row_id,:]) == 0
         return 0.
@@ -258,4 +302,10 @@ function row_sum(df, row_id)
     end
 end
 
-
+function get_iis(m::JuMP.Model)    
+    grb_model = MathProgBase.getrawsolver(getInternalModel(m))
+    num_constrs = Gurobi.num_constrs(grb_model)
+    Gurobi.computeIIS(grb_model)
+    iis_constrs = Gurobi.get_intattrarray(grb_model, "IISConstr",  1, num_constrs)
+    m.linconstr[find(iis_constrs)]
+end

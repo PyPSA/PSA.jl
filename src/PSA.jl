@@ -61,7 +61,7 @@ function Network(
             :s_max_pu, :capital_cost, :length, :terrain_factor, :num_parallel,
             :v_ang_min, :v_ang_max, :sub_network, :p0, :q0, :p1, :q1,
             :x_pu, :r_pu, :g_pu, :b_pu, :x_pu_eff, :r_pu_eff,
-            :s_nom_opt, :mu_lower, :mu_upper, :s_nom_step, :abs_ext_min, :rel_ext_min]),
+            :s_nom_opt, :mu_lower, :mu_upper, :s_nom_step, :x_step, :s_nom_ext_min]),
 
     links = DataFrame(repeat([Bool[]], outer=21),
             [:name, :bus0, :bus1, :type, :efficiency, :p_nom, :p_nom_extendable,

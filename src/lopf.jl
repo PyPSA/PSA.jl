@@ -1,4 +1,6 @@
 using JuMP
+using MathProgBase
+using Gurobi
 
 include("auxilliaries.jl")
 
@@ -135,21 +137,34 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 
     bigM_default = 1e6 # TODO: choose bigM default
 
-    if investment_type == "integer"
+    if investment_type == "continuous"
+        @variable(m, LN_opt_inv[l=1:N_ext])
+        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
+
+    elseif investment_type == "integer"
         @variable(m, LN_opt_inv[l=1:N_ext], Int)
         @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
 
+#    elseif investment_type == "integer_bigM"
+
+    
+    # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
+    # apart from that investment is continuous
+    # uses big-M method to linearise bilinear term
     elseif investment_type == "binary_absolute_bigm"
         bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @constraints m begin
-            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:abs_ext_min][l] <= LN_inv[l]
+            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv[l]
             [l=1:N_ext], - bigM[l] * LN_opt[l] <= LN_inv[l]
             [l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
             [l=1:N_ext], LN_s_nom[l] == LN_inv[l] + lines[ext_lines_b,:s_nom][l]
         end
 
+    # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
+    # apart from that investment is continuous
+    # uses convex hull formulation to linearise bilinear term
     elseif investment_type == "binary_absolute_convexhull"
         bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
@@ -164,34 +179,9 @@ function lopf(network, solver; formulation::String="angles", objective::String="
             [l=1:N_ext], LN_inv_2[l] <= bigM[l] * LN_opt[l]
         end
         @constraints m begin
-            [l=1:N_ext], (1-LN_opt[l]) * lines[ext_lines_b,:abs_ext_min][l] <= LN_inv_1[l]
+            [l=1:N_ext], (1-LN_opt[l]) * lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv_1[l]
             [l=1:N_ext], 0 == LN_inv_2[l]
             [l=1:N_ext], LN_s_nom[l] == LN_inv_1[l] + LN_inv_2[l] + lines[ext_lines_b,:s_nom][l]
-        end
-
-    # TODO: requires non infinite s_nom_max values to work properly (and make sense):
-    # current workaround: choose very high s_nom_max as default and set rel_ext_min to 0.0
-    # this way minimum expansion constraint is ignored
-    elseif investment_type == "binary_relative"
-
-        # TODO: catch infinite s_nom_max lines
-        s_nom_max = lines[ext_lines_b,:s_nom_max]
-        rel_ext_min = lines[ext_lines_b,:rel_ext_min]
-        for l=1:N_ext
-            if s_nom_max[l] == Inf
-                s_nom_max[l] = 1e6 # TODO: not working; assigning new values in DataFrame not working yet; ugly workaround
-                rel_ext_min[l] = 0.0
-            end
-        end
-
-        bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default) 
-        @variable(m, LN_opt[l=1:N_ext], Bin)
-        @variable(m, LN_inv[l=1:N_ext])
-        @constraints m begin
-            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) * rel_ext_min[l] <= LN_inv[l]
-            [l=1:N_ext], - bigM[l] * LN_opt[l] <= LN_inv[l]
-            [l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
-            [l=1:N_ext], LN_s_nom[l] == LN_inv[l]* ( s_nom_max[l]-lines[ext_lines_b,:s_nom][l] ) + lines[ext_lines_b,:s_nom][l]
         end
 
     end
@@ -410,7 +400,6 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 
 # 6. + 7. power flow formulations
 
-    # TODO: introduce bilinearity of changing reactances
     # TODO: check power flow for DC networks
 
     println("Adding power flow formulation $formulation to the model.")
@@ -419,11 +408,11 @@ function lopf(network, solver; formulation::String="angles", objective::String="
     if formulation == "angles"
 
         # voltage angles
-        @variable(m, theta[1:N,1:T])
+        @variable(m, THETA[1:N,1:T])
 
         K = incidence_matrix(network)
         Lambda = weighted_laplace_matrix(network)
-        B = reactance_matrix(network)
+        B = susceptance_matrix(network)
 
         # load data in correct order
         loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
@@ -439,11 +428,230 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                 - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
                 - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                == Lambda[n,:]' * theta[:,t] ))
+                == Lambda[n,:]' * THETA[:,t] ))
 
-        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == (B * K' * theta[:,t])[l] )
+        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == (B * K' * THETA[:,t])[l] )
 
-        @constraint(m, slack[t=1:T], theta[1,t] == 0 )
+        @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
+
+        # a. angles formulation
+    elseif formulation == "angles_alternative"
+
+        # voltage angles
+        @variable(m, THETA[1:N,1:T])
+
+        # load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, voltages[n=1:N, t=1:T], (
+
+                  sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                      .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+
+        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x][l]^(-1) *
+                                                        ( THETA[busidx[lines[:bus0][l]], t]
+                                                        - THETA[busidx[lines[:bus1][l]], t]
+                                                        )
+        )
+
+        @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
+
+    # a. angles formulation
+    elseif formulation == "angles_bilinear"
+
+        # cannot be solved by Gurobi, needs Ipopt!
+        # needs investment_type defined!
+
+        # voltage angles
+        @variable(m, THETA[1:N,1:T])
+
+        # load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, voltages[n=1:N, t=1:T], (
+
+                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                   - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+
+        @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  lines[:x][l]^(-1) *
+                                                        ( THETA[busidx[lines[:bus0][l]], t]
+                                                        - THETA[busidx[lines[:bus1][l]], t]
+                                                        )
+
+                                                      + lines[:x_step][l]^(-1) *
+                                                        LN_opt_inv[l] * THETA[busidx[lines[:bus0][l]], t]
+
+                                                      - lines[:x_step][l]^(-1) *
+                                                        LN_opt_inv[l] * THETA[busidx[lines[:bus1][l]], t] )
+
+        @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+
+    # a. angles formulation
+    elseif formulation == "angles_mccormick"
+
+        # needs investment_type defined!
+
+        # variables
+        @variable(m, THETA[1:N,1:T])
+        @variable(m, AUX_mu[1:L,1:T])
+        @variable(m, AUX_xi[1:L,1:T])
+
+        # load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, [l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+
+        max_angle_diff = 30 # TODO: embed properly
+        min_angle_diff = -max_angle_diff
+
+        @constraints(m, begin
+            [l=1:L,t=1:T], AUX_xi[l,t] <= max_angle_diff
+            [l=1:L,t=1:T], AUX_xi[l,t] >= min_angle_diff
+        end )
+
+        @constraint(m, voltages[n=1:N, t=1:T], 
+        
+                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                   - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )
+
+        @constraint(m, flows[l=1:L, t=1:T], 
+            LN[l, t] == lines[:x][l]^(-1) * AUX_xi[l,t]
+                        + lines[:x_step][l]^(-1) * AUX_mu[l,t]
+        ) 
+
+        # TODO: set min/max values properly
+        inv_min = 0
+        inv_max = 30   
+        
+        @constraints(m, begin
+            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min * AUX_xi[l,t]
+                            + LN_opt_inv[l] * min_angle_diff
+                            - inv_min * min_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max * AUX_xi[l,t]
+                            + LN_opt_inv[l] * max_angle_diff
+                            - inv_max * max_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max * AUX_xi[l,t]
+                            + LN_opt_inv[l] * min_angle_diff
+                            - inv_max * min_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min * AUX_xi[l,t]
+                            + LN_opt_inv[l] * max_angle_diff
+                            - inv_min * max_angle_diff)
+        end)
+
+        @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+
+    # a. angles formulation
+    elseif formulation == "angles_taylorrelaxation"
+
+        # TODO: set max values properly
+        inv_max = 30   
+
+        # variables
+        @variable(m, THETA[1:N,1:T])
+        @variable(m, AUX_XI[1:L,1:T])
+
+        # load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        # (2)
+        @constraint(m, voltages[n=1:N, t=1:T], (
+
+                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                   - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+
+        # (2)
+        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x][l]^(-1) *
+                                                        ( THETA[busidx[lines[:bus0][l]], t]
+                                                        - THETA[busidx[lines[:bus1][l]], t]
+                                                        )
+
+                                                      + AUX_XI[l,t] )
+
+        @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+
+        # (1)
+        L_existing = Int64[]
+        for l=1:L
+            if lines[:s_nom][l] > 0
+                push!(L_existing, l)
+            end
+        end
+
+        @constraints(m, begin
+            [l in L_existing, t=1:T], lines[:x][l]^(-1) *
+                            ( THETA[busidx[lines[:bus0][l]], t]
+                            - THETA[busidx[lines[:bus1][l]], t]
+                            ) <= lines[:s_nom][l]
+
+            [l in L_existing, t=1:T], lines[:x][l]^(-1) *
+                            ( THETA[busidx[lines[:bus1][l]], t]
+                            - THETA[busidx[lines[:bus0][l]], t]
+                            ) >= lines[:s_nom][l]
+            end
+        )
+
+        # (4)
+        @constraints(m, begin
+            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:s_nom_step][l] * LN_opt_inv[l]
+            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:s_nom_step][l] * LN_opt_inv[l]
+        end )
+
+        # calculate Ms
+        line_paths = get_line_paths(network)
+        m_factor = zeros(L)
+        for l=1:L
+            for k in line_paths[l]
+                m_factor[l] += lines[:s_nom_step][k] * lines[:x_step][k]
+            end
+        end
+
+        # (3)
+        @constraints(m, begin
+            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:x_step][l]^(-1) * LN_opt_inv[l] * m_factor[l]
+            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:x_step][l]^(-1) * LN_opt_inv[l] * m_factor[l]
+        end )
+
+        # (5)
+        @constraints(m, begin
+            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step][l]^(-1) * inv_max * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= lines[:x_step][l]^(-1) * m_factor[l] * (inv_max - LN_opt_inv[l])
+            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step][l]^(-1) * inv_max * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= (-1) * ( lines[:x_step][l]^(-1) * m_factor[l] * (inv_max - LN_opt_inv[l]) )
+        end )
 
     # b. kirchhoff formulation
     elseif formulation == "kirchhoff"

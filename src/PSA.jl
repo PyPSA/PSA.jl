@@ -5,6 +5,7 @@ using DataFrames, CSV, LightGraphs
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
 include("lopf.jl")
+include("iterative_lopf.jl")
 
 mutable struct network_mutable
     buses::DataFrame

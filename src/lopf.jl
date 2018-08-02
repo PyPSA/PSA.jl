@@ -4,7 +4,7 @@ using Gurobi
 
 include("auxilliaries.jl")
 
-function lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="")
+function lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous")
     
     # This function is organized as the following:
     #
@@ -135,54 +135,56 @@ function lopf(network, solver; formulation::String="angles", objective::String="
     # 2.5 add integer variables if applicable
     println("-- 2.5 add integer variables if applicable")
 
-    bigM_default = 1e6 # TODO: choose bigM default
+    bigM_default = 1e4 # TODO: choose bigM default
 
     if investment_type == "continuous"
-        @variable(m, LN_opt_inv[l=1:N_ext])
-        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
+        @variable(m, LN_inv[l=1:N_ext])
+        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
 
     elseif investment_type == "integer"
-        @variable(m, LN_opt_inv[l=1:N_ext], Int)
-        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_opt_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
-
-#    elseif investment_type == "integer_bigM"
-
+        @variable(m, LN_inv[l=1:N_ext], Int)
+        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
     
     # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
     # apart from that investment is continuous
-    # uses big-M method to linearise bilinear term
-    elseif investment_type == "binary_absolute_bigm"
+    # uses big-M method to linearise bilinear term (either-or constraint)
+
+    elseif investment_type == "binary_bigm"
         bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
-        @constraints m begin
-            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv[l]
-            [l=1:N_ext], - bigM[l] * LN_opt[l] <= LN_inv[l]
+        @constraints(m, begin
+            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] * lines[ext_lines_b,:s_nom_step][l]^(-1) <= LN_inv[l]
+            [l=1:N_ext], 0 <= LN_inv[l] # no reduction of capacity allowed
             [l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
-            [l=1:N_ext], LN_s_nom[l] == LN_inv[l] + lines[ext_lines_b,:s_nom][l]
-        end
+            [l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]
+        end)
+
+    # TODO: convex hull actually only makes sense if other constraint not 0 enabled.
 
     # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
     # apart from that investment is continuous
-    # uses convex hull formulation to linearise bilinear term
-    elseif investment_type == "binary_absolute_convexhull"
-        bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
-        @variable(m, LN_opt[l=1:N_ext], Bin)
-        @variable(m, LN_inv[l=1:N_ext])
-        @variable(m, LN_inv_1[l=1:N_ext])
-        @variable(m, LN_inv_2[l=1:N_ext])
-        #@constraint(m, [l=1:N_ext], LN_inv[l] = LN_inv_1[l] + LN_inv_2[l])
-        @constraints m begin
-            [l=1:N_ext], 0 <= LN_inv_1[l]
-            [l=1:N_ext], LN_inv_1[l] <= bigM[l] * (1-LN_opt[l])
-            [l=1:N_ext], 0 <= LN_inv_2[l]
-            [l=1:N_ext], LN_inv_2[l] <= bigM[l] * LN_opt[l]
-        end
-        @constraints m begin
-            [l=1:N_ext], (1-LN_opt[l]) * lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv_1[l]
-            [l=1:N_ext], 0 == LN_inv_2[l]
-            [l=1:N_ext], LN_s_nom[l] == LN_inv_1[l] + LN_inv_2[l] + lines[ext_lines_b,:s_nom][l]
-        end
+    # uses convex hull formulation to linearise bilinear term (either-or constraint)
+
+    # elseif investment_type == "binary_convexhull"
+    #     bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
+    #     @variable(m, LN_opt[l=1:N_ext], Bin)
+    #     @variable(m, LN_inv[l=1:N_ext])
+    #     @variable(m, LN_inv_1[l=1:N_ext])
+    #     @variable(m, LN_inv_2[l=1:N_ext])
+    #     @constraint(m, [l=1:N_ext], LN_inv[l] == LN_inv_1[l] + LN_inv_2[l])
+    #     @constraints(m, begin
+    #         [l=1:N_ext], LN_inv_1[l] >= - bigM[l] * LN_opt[l] # no reduction of capacity allowed 
+    #         [l=1:N_ext], LN_inv_1[l] <= bigM[l] * LN_opt[l]
+    #         [l=1:N_ext], LN_inv_2[l] >= - bigM[l] * (1-LN_opt[l])  
+    #         [l=1:N_ext], LN_inv_2[l] <= bigM[l] * (1-LN_opt[l])
+    #     end)
+
+    #     @constraints(m, begin
+    #         [l=1:N_ext], LN_inv_1[l] >= lines[ext_lines_b,:s_nom_ext_min][l] * lines[ext_lines_b,:s_nom_step][l]^(-1)
+    #         [l=1:N_ext], 0 == LN_inv_2[l]
+    #         [l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]
+    #     end)
 
     end
 
@@ -219,8 +221,8 @@ function lopf(network, solver; formulation::String="angles", objective::String="
     # 3.4 set constraints for extendable links
     println("-- 3.4 set constraints for extendable links")
     @constraints(m, begin
-    [l=1:N_ext,t=1:T], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
-    [l=1:N_ext,t=1:T], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
+        [l=1:N_ext,t=1:T], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
+        [l=1:N_ext,t=1:T], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
     end)
 
     LK = [LK_fix; LK_ext]
@@ -457,7 +459,7 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                 == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
                 - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x][l]^(-1) *
+        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *     
                                                         ( THETA[busidx[lines[:bus0][l]], t]
                                                         - THETA[busidx[lines[:bus1][l]], t]
                                                         )
@@ -491,16 +493,8 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                 == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  lines[:x][l]^(-1) *
-                                                        ( THETA[busidx[lines[:bus0][l]], t]
-                                                        - THETA[busidx[lines[:bus1][l]], t]
-                                                        )
-
-                                                      + lines[:x_step][l]^(-1) *
-                                                        LN_opt_inv[l] * THETA[busidx[lines[:bus0][l]], t]
-
-                                                      - lines[:x_step][l]^(-1) *
-                                                        LN_opt_inv[l] * THETA[busidx[lines[:bus1][l]], t] )
+        @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  (lines[:x_pu][l]^(-1) + lines[:x_step_pu][l]^(-1) * LN_inv[l]) *
+                                                           (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0)
 
@@ -519,7 +513,7 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 
         @constraint(m, [l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
 
-        max_angle_diff = 30 # TODO: embed properly
+        max_angle_diff = pi / 6 
         min_angle_diff = -max_angle_diff
 
         @constraints(m, begin
@@ -542,27 +536,30 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )
 
         @constraint(m, flows[l=1:L, t=1:T], 
-            LN[l, t] == lines[:x][l]^(-1) * AUX_xi[l,t]
-                        + lines[:x_step][l]^(-1) * AUX_mu[l,t]
+            LN[l, t] == lines[:x_pu][l]^(-1) * AUX_xi[l,t]
+                        + lines[:x_step_pu][l]^(-1) * AUX_mu[l,t]
         ) 
 
-        # TODO: set min/max values properly
-        inv_min = 0
-        inv_max = 30   
+        inv_min = zeros(L)
+        inv_max = zeros(L)
+        for l=1:L
+            inv_min[l] = (lines[:s_nom_min][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
+            inv_max[l] = (lines[:s_nom_max][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
+        end
         
         @constraints(m, begin
-            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min * AUX_xi[l,t]
-                            + LN_opt_inv[l] * min_angle_diff
-                            - inv_min * min_angle_diff)
-            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max * AUX_xi[l,t]
-                            + LN_opt_inv[l] * max_angle_diff
-                            - inv_max * max_angle_diff)
-            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max * AUX_xi[l,t]
-                            + LN_opt_inv[l] * min_angle_diff
-                            - inv_max * min_angle_diff)
-            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min * AUX_xi[l,t]
-                            + LN_opt_inv[l] * max_angle_diff
-                            - inv_min * max_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
+                            + LN_inv[l] * min_angle_diff
+                            - inv_min[l] * min_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
+                            + LN_inv[l] * max_angle_diff
+                            - inv_max[l] * max_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
+                            + LN_inv[l] * min_angle_diff
+                            - inv_max[l] * min_angle_diff)
+            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
+                            + LN_inv[l] * max_angle_diff
+                            - inv_min[l] * max_angle_diff)
         end)
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0)
@@ -570,8 +567,12 @@ function lopf(network, solver; formulation::String="angles", objective::String="
     # a. angles formulation
     elseif formulation == "angles_taylorrelaxation"
 
-        # TODO: set max values properly
-        inv_max = 30   
+        # not working yet
+
+        inv_max = zeros(L)
+        for l=1:L
+            inv_max[l] = (lines[:s_nom_max][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
+        end
 
         # variables
         @variable(m, THETA[1:N,1:T])
@@ -596,7 +597,7 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
         # (2)
-        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x][l]^(-1) *
+        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
                                                         ( THETA[busidx[lines[:bus0][l]], t]
                                                         - THETA[busidx[lines[:bus1][l]], t]
                                                         )
@@ -614,12 +615,12 @@ function lopf(network, solver; formulation::String="angles", objective::String="
         end
 
         @constraints(m, begin
-            [l in L_existing, t=1:T], lines[:x][l]^(-1) *
+            [l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
                             ( THETA[busidx[lines[:bus0][l]], t]
                             - THETA[busidx[lines[:bus1][l]], t]
                             ) <= lines[:s_nom][l]
 
-            [l in L_existing, t=1:T], lines[:x][l]^(-1) *
+            [l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
                             ( THETA[busidx[lines[:bus1][l]], t]
                             - THETA[busidx[lines[:bus0][l]], t]
                             ) >= lines[:s_nom][l]
@@ -628,8 +629,8 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 
         # (4)
         @constraints(m, begin
-            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:s_nom_step][l] * LN_opt_inv[l]
-            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:s_nom_step][l] * LN_opt_inv[l]
+            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:s_nom_step][l] * LN_inv[l]
+            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:s_nom_step][l] * LN_inv[l]
         end )
 
         # calculate Ms
@@ -637,20 +638,20 @@ function lopf(network, solver; formulation::String="angles", objective::String="
         m_factor = zeros(L)
         for l=1:L
             for k in line_paths[l]
-                m_factor[l] += lines[:s_nom_step][k] * lines[:x_step][k]
+                m_factor[l] += lines[:s_nom_step][k] * lines[:x_step_pu][k]
             end
         end
 
         # (3)
         @constraints(m, begin
-            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:x_step][l]^(-1) * LN_opt_inv[l] * m_factor[l]
-            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:x_step][l]^(-1) * LN_opt_inv[l] * m_factor[l]
+            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:x_step_pu][l]^(-1) * LN_inv[l] * m_factor[l]
+            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:x_step_pu][l]^(-1) * LN_inv[l] * m_factor[l]
         end )
 
-        # (5)
+        # # (5)
         @constraints(m, begin
-            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step][l]^(-1) * inv_max * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= lines[:x_step][l]^(-1) * m_factor[l] * (inv_max - LN_opt_inv[l])
-            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step][l]^(-1) * inv_max * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= (-1) * ( lines[:x_step][l]^(-1) * m_factor[l] * (inv_max - LN_opt_inv[l]) )
+            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step_pu][l]^(-1) * inv_max[l] * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= lines[:x_step_pu][l]^(-1) * m_factor[l] * (inv_max[l] - LN_inv[l])
+            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step_pu][l]^(-1) * inv_max[l] * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= (-1) * ( lines[:x_step_pu][l]^(-1) * m_factor[l] * (inv_max[l] - LN_inv[l]) )
         end )
 
     # b. kirchhoff formulation
@@ -802,6 +803,7 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                             + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                             + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
                     )
+
     elseif objective == "extensions"
         # !!! not working yet !!!
         # TODO: Modify objective function such that only cost of extensions and opex is included.
@@ -845,6 +847,18 @@ function lopf(network, solver; formulation::String="angles", objective::String="
 
 # 10. extract optimisation results
     if status==:Optimal
+
+        # println("################")
+        # for t=1:T
+        #     for l=1:L
+        #         println(getvalue(THETA[busidx[lines[:bus0][l]], t]) - getvalue(THETA[busidx[lines[:bus1][l]], t]))
+        #     end
+        # end
+        # println(getvalue(THETA))
+        # println(getvalue(LN_inv))
+        # println("################")
+
+        println("-----> ", dot(lines[ext_lines_b,:capital_cost], getvalue(LN_s_nom[:])) + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]))
 
         orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])

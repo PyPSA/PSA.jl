@@ -149,8 +149,8 @@ function calculate_dependent_values!(network)
     # lines
     network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
     defaults = [(:s_nom_extendable, true), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_step, 100),
-                (:x_step, 10000.0), (:s_nom_ext_min, 1000)] # TODO: set reasonable default value for :s_nom_step, :abs_ext_min, :rel_ext_min, x_step=0.2?
+                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_step, 100.0),
+                (:x_step, 0.25), (:s_nom_ext_min, 100.0)] # TODO: set reasonable default value for :s_nom_step, :abs_ext_min, :rel_ext_min, x_step=0.2?
     for (col, default) in defaults
         set_default(network.lines, col, default)
     end
@@ -158,6 +158,7 @@ function calculate_dependent_values!(network)
     network.lines[:r_pu] = network.lines[:r]./(network.lines[:v_nom].^2)
     network.lines[:b_pu] = network.lines[:b].*network.lines[:v_nom].^2
     network.lines[:g_pu] = network.lines[:g].*network.lines[:v_nom].^2
+    network.lines[:x_step_pu] = network.lines[:x_step]./(network.lines[:v_nom].^2)
 
     # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),

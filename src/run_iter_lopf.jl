@@ -1,6 +1,5 @@
-function iterative_lopf(network, solver, iterations; formulation::String="angles", objective::String="total", investment_type::String="continuous")
+function run_iter_lopf(network, solver, iterations; formulation::String="angles", objective::String="total", investment_type::String="continuous")
 
-    # calculate_dependent_values!(network)
     x_0 = deepcopy(network.lines[:x])
     s_nom_0 = deepcopy(network.lines[:s_nom])
 
@@ -12,7 +11,7 @@ function iterative_lopf(network, solver, iterations; formulation::String="angles
 
         println("Run iteration $k")
 
-        m = lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type)
+        m = run_lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type)
 
         push!(objectives, m.objVal)
         push!(capacities, network.lines[:s_nom_opt])

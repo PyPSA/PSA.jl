@@ -1,10 +1,9 @@
 using JuMP
 using MathProgBase
-using Gurobi
 
 include("auxilliaries.jl")
 
-function lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous")
+function build_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous")
     
     # This function is organized as the following:
     #
@@ -840,71 +839,6 @@ function lopf(network, solver; formulation::String="angles", objective::String="
                     )
     end
 
-
-    status = solve(m)
-
-# --------------------------------------------------------------------------------------------------------
-
-# 10. extract optimisation results
-    if status==:Optimal
-
-        # println("################")
-        # for t=1:T
-        #     for l=1:L
-        #         println(getvalue(THETA[busidx[lines[:bus0][l]], t]) - getvalue(THETA[busidx[lines[:bus1][l]], t]))
-        #     end
-        # end
-        # println(getvalue(THETA))
-        # println(getvalue(LN_inv))
-        # println("################")
-
-        println("-----> ", dot(lines[ext_lines_b,:capital_cost], getvalue(LN_s_nom[:])) + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]))
-
-        orig_gen_order = network.generators[:name]
-        generators[:p_nom_opt] = deepcopy(generators[:p_nom])
-        generators[ext_gens_b,:p_nom_opt] = getvalue(gen_p_nom)
-        network.generators = generators
-        network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
-        network.generators = select_names(network.generators, orig_gen_order)
-
-        orig_line_order = network.lines[:name]
-        network.lines = lines
-        lines[:s_nom_opt] = deepcopy(lines[:s_nom])
-        network.lines[ext_lines_b,:s_nom_opt] = getvalue(LN_s_nom)
-        network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
-        network.lines = select_names(network.lines, orig_line_order)
-
-        # network.buses_t["p"] =  DataFrame(ncols=nrow(network.buses))
-
-        if nrow(links)>0
-            orig_link_order = network.links[:name]
-            network.links = links
-            links[:p_nom_opt] = deepcopy(links[:p_nom])
-            network.links[ext_links_b,:p_nom_opt] = getvalue(LK_p_nom)
-            network.links_t["p0"] = names!(DataFrame(transpose(getvalue(LK))), Symbol.(links[:name]))
-            network.links = select_names(network.links, orig_link_order)
-
-        end
-        if nrow(storage_units)>0
-            orig_sus_order = network.storage_units[:name]
-            network.storage_units = storage_units
-
-            storage_units[:p_nom_opt] = deepcopy(storage_units[:p_nom])
-            network.storage_units[ext_sus_b,:p_nom_opt] = getvalue(SU_p_nom)
-            # network.storage_units_t["spill"] = spillage
-            # network.storage_units_t["spill"][:,spill_sus_b] = names!(DataFrame(transpose(getvalue(SU_spill))),
-            #                     names(spillage)[spill_sus_b])
-            network.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),
-                                Symbol.(storage_units[:name]))
-            network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(SU_dispatch .- SU_store))),
-                                Symbol.(storage_units[:name]))
-            network.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(getvalue(SU_soc))),
-                                Symbol.(storage_units[:name]))
-            network.storage_units = select_names(network.storage_units, orig_sus_order)
-        end
-        align_component_order!(network)
-        println("Reduce cost to $(m.objVal)")
-    end
     return m
 
 end

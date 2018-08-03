@@ -1,9 +1,15 @@
 using JuMP
 using MathProgBase
 
-function run_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous")
+function run_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous", blockmodel::Bool=false, decomposition::String="")
 
-    m = build_lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type)
+    if blockmodel
+        println("Build block JuMP model.")
+        m = build_block_lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type,decomposition=decomposition)
+    else
+        println("Build ordinary JuMP model.")
+        m = build_lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type)
+    end
 
     status = solve(m)
 
@@ -19,6 +25,7 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         N = nrow(network.buses)
         L = nrow(network.lines)
         T = nrow(network.snapshots)
+        fix_gens_b = (.!generators[:p_nom_extendable])
         ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
         fix_lines_b = (.!lines[:s_nom_extendable])
         ext_lines_b = .!fix_lines_b
@@ -41,6 +48,12 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         ST_soc = [m[:ST_soc_fix]; m[:ST_soc_ext]]
         ST_spill = [m[:ST_spill_fix], m[:ST_spill_ext]]
 
+        lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
+        generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
+        links = [links[fix_links_b,:]; links[ext_links_b,:]]
+        storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
+        stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
+
         # TODO: temporary for debugging!
         # println("################")
         # for t=1:T
@@ -55,7 +68,7 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
 
         orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])
-        generators[ext_gens_b,:p_nom_opt] = getvalue(m[:gen_p_nom])
+        generators[ext_gens_b,:p_nom_opt] = getvalue(m[:G_p_nom])
         network.generators = generators
         network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
         network.generators = select_names(network.generators, orig_gen_order)

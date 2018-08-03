@@ -5,7 +5,7 @@ include("auxilliaries.jl")
 
 # TODO: needs cleansing after extraction of run_lopf.jl
 
-function build_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous")
+function build_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous", blockmodel::Bool=false)
     
     # This function is organized as the following:
     #
@@ -29,7 +29,12 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     #       and N_*/L_* defining the nuber of considered variables added to the model.
 
     println("Creating model.")
-    m = Model(solver=solver)
+
+    if blockmodel
+        m = BlockModel(solver=solver)
+    else
+        m = Model(solver=solver)
+    end
 
     calculate_dependent_values!(network)
     buses = network.buses
@@ -86,11 +91,11 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     @variable m G_ext[gr=1:N_ext,t = 1:T]
 
-    @variable m p_nom_min[gr] <=  gen_p_nom[gr=1:N_ext] <= p_nom_max[gr]
+    @variable m p_nom_min[gr] <=  G_p_nom[gr=1:N_ext] <= p_nom_max[gr]
 
     @constraints m begin
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= gen_p_nom[gr]*p_min_pu(t,gr)
-        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_max_pu(t,gr)
+        lower_gen_limit[gr=1:N_ext,t=1:T], G_ext[gr,t] >= G_p_nom[gr]*p_min_pu(t,gr)
+        upper_gen_limit[gr=1:N_ext,t=1:T], G_ext[gr,t] <= G_p_nom[gr]*p_max_pu(t,gr)
     end
 
 
@@ -129,8 +134,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     # 2.4 add line constraint for extendable lines
     println("-- 2.4 add line constraint for extendable lines")
     @constraints(m, begin
-            [l=1:N_ext,t=1:T], LN_ext[l,t] <=  LN_s_nom[l]
-            [l=1:N_ext,t=1:T], LN_ext[l,t] >= -LN_s_nom[l]
+            upper_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] <=  LN_s_nom[l]
+            lower_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] >= -LN_s_nom[l]
     end)
 
     # 2.5 add integer variables if applicable
@@ -140,7 +145,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     if investment_type == "continuous"
         @variable(m, LN_inv[l=1:N_ext])
-        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
+        @constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l])
 
     elseif investment_type == "integer"
         @variable(m, LN_inv[l=1:N_ext], Int)
@@ -155,10 +160,10 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
         @constraints(m, begin
-            [l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] * lines[ext_lines_b,:s_nom_step][l]^(-1) <= LN_inv[l]
-            [l=1:N_ext], 0 <= LN_inv[l] # no reduction of capacity allowed
-            [l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
-            [l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]
+            binary1[l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] * lines[ext_lines_b,:s_nom_step][l]^(-1) <= LN_inv[l]
+            binary2[l=1:N_ext], 0 <= LN_inv[l] # no reduction of capacity allowed
+            binary3[l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
+            binary4[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]
         end)
 
     # TODO: convex hull actually only makes sense if other constraint not 0 enabled.
@@ -222,8 +227,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     # 3.4 set constraints for extendable links
     println("-- 3.4 set constraints for extendable links")
     @constraints(m, begin
-        [l=1:N_ext,t=1:T], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
-        [l=1:N_ext,t=1:T], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
+        lower_link_limit[l=1:N_ext,t=1:T], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
+        upper_link_limit[l=1:N_ext,t=1:T], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
     end)
 
     LK = [LK_fix; LK_ext]
@@ -279,9 +284,9 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     println("-- 4.4 set constraints for extendable storage_units")
 
     @constraints(m, begin
-            [s=1:N_ext,t=1:T], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
-            [s=1:N_ext,t=1:T], SU_store_ext[s,t] <= - SU_p_nom[s].*storage_units[ext_sus_b, :p_min_pu][s]
-            [s=1:N_ext,t=1:T], SU_soc_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :max_hours][s]
+            su_dispatch_limit[s=1:N_ext,t=1:T], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
+            su_storage_limit[s=1:N_ext,t=1:T], SU_store_ext[s,t] <= - SU_p_nom[s].*storage_units[ext_sus_b, :p_min_pu][s]
+            su_capacity_limit[s=1:N_ext,t=1:T], SU_soc_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :max_hours][s]
     end)
 
     # 4.5 set charging constraint
@@ -300,16 +305,16 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     not_cyclic_i = collect(1:N_sus)[.!storage_units[:cyclic_state_of_charge]]
 
     @constraints(m, begin
-            [s=is_cyclic_i], SU_soc[s,1] == (SU_soc[s,T]
+            su_logic1[s=is_cyclic_i], SU_soc[s,1] == (SU_soc[s,T]
                                         + storage_units[s,:efficiency_store] * SU_store[s,1]
                                         - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
                                         + inflow[1,s] - SU_spill[s,1] )
-            [s=not_cyclic_i], SU_soc[s,1] == (storage_units[s,:state_of_charge_initial]
+            su_logic2[s=not_cyclic_i], SU_soc[s,1] == (storage_units[s,:state_of_charge_initial]
                                         + storage_units[s,:efficiency_store] * SU_store[s,1]
                                         - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
                                         + inflow[1,s] - SU_spill[s,1])
 
-            [s=1:N_sus,t=2:T], SU_soc[s,t] == (SU_soc[s,t-1]
+            su_logic3[s=1:N_sus,t=2:T], SU_soc[s,t] == (SU_soc[s,t-1]
                                             + storage_units[s,:efficiency_store] * SU_store[s,t]
                                             - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,t]
                                             + inflow[t,s] - SU_spill[s,t] )
@@ -361,9 +366,9 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     println("-- 5.4 set constraints for extendable stores")
 
     @constraints(m, begin
-            [s=1:N_ext,t=1:T], ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
-            [s=1:N_ext,t=1:T], ST_store_ext[s,t] <= - ST_e_nom[s].*stores[ext_stores_b, :e_min_pu][s]
-            [s=1:N_ext,t=1:T], ST_soc_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :max_hours][s]
+            st_dispatch_limit[s=1:N_ext,t=1:T], ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
+            st_storage_limit[s=1:N_ext,t=1:T], ST_store_ext[s,t] <= - ST_e_nom[s].*stores[ext_stores_b, :e_min_pu][s]
+            st_capacity_limit[s=1:N_ext,t=1:T], ST_soc_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :max_hours][s]
     end)
 
     # 5.5 set charging constraint
@@ -382,17 +387,17 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     not_cyclic_i = collect(1:N_st)[.!stores[:cyclic_state_of_charge]]
 
     @constraints(m, begin
-            [s=is_cyclic_i,t=1], ST_soc[s,t] == (ST_soc[s,T]
+            st_logic1[s=is_cyclic_i,t=1], ST_soc[s,t] == (ST_soc[s,T]
                                         + stores[s,:efficiency_store] * ST_store[s,t]
                                         - stores[s,:efficiency_dispatch] * ST_dispatch[s,t] # TODO: this is different to SU
                                         + inflow[t,s] - ST_spill[s,t])
 
-            [s=not_cyclic_i,t=1], ST_soc[s,t] == (stores[s,:state_of_charge_initial]
+            st_logic2[s=not_cyclic_i,t=1], ST_soc[s,t] == (stores[s,:state_of_charge_initial]
                                         + stores[s,:efficiency_store] * ST_store[s,t]
                                         - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO: this is different to SU
                                         + inflow[t,s] - ST_spill[s,t])
 
-            [s=is_cyclic_i,t=2:T], ST_soc[s,t] == (ST_soc[s,t-1]
+            st_logic3[s=is_cyclic_i,t=2:T], ST_soc[s,t] == (ST_soc[s,t-1]
                                             + stores[s,:efficiency_store] * ST_store[s,t]
                                             - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]  # TODO: this is different to SU
                                             + inflow[t,s] - ST_spill[s,t])
@@ -512,14 +517,14 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
         # load data in correct order
         loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-        @constraint(m, [l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+        @constraint(m, anglediff[l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
 
         max_angle_diff = pi / 6 
         min_angle_diff = -max_angle_diff
 
         @constraints(m, begin
-            [l=1:L,t=1:T], AUX_xi[l,t] <= max_angle_diff
-            [l=1:L,t=1:T], AUX_xi[l,t] >= min_angle_diff
+            anglediff_upper_limit[l=1:L,t=1:T], AUX_xi[l,t] <= max_angle_diff
+            anglediff_lower_limit[l=1:L,t=1:T], AUX_xi[l,t] >= min_angle_diff
         end )
 
         @constraint(m, voltages[n=1:N, t=1:T], 
@@ -549,16 +554,16 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
         end
         
         @constraints(m, begin
-            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
+            mccormick1[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
                             + LN_inv[l] * min_angle_diff
                             - inv_min[l] * min_angle_diff)
-            [l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
+            mccormick2[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
                             + LN_inv[l] * max_angle_diff
                             - inv_max[l] * max_angle_diff)
-            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
+            mccormick3[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
                             + LN_inv[l] * min_angle_diff
                             - inv_max[l] * min_angle_diff)
-            [l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
+            mccormick4[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
                             + LN_inv[l] * max_angle_diff
                             - inv_min[l] * max_angle_diff)
         end)
@@ -787,7 +792,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     if objective == "total"
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                            + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:] )
+                            + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
                             + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
                             + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
@@ -811,7 +816,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
         # Reducing existing capacity currently saves money. This is wrong!
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                            + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:] - generators[ext_gens_b,:p_nom])
+                            + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] - generators[ext_gens_b,:p_nom])
 
                             + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:] - lines[ext_lines_b,:s_nom])
 
@@ -826,7 +831,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     else # TODO: original objective; delete when other objectives tested.
         @objective(m, Min,
                               sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                            + dot(generators[ext_gens_b,:capital_cost], gen_p_nom[:]  )
+                            + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:]  )
 
                             + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
 
@@ -840,6 +845,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
                     )
     end
+
+    println("Finished building model.")
 
     return m
 

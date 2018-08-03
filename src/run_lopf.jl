@@ -41,11 +41,6 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         ST_soc = [m[:ST_soc_fix]; m[:ST_soc_ext]]
         ST_spill = [m[:ST_spill_fix], m[:ST_spill_ext]]
 
-        println(G)
-        println(getvalue(G))
-        println(LN)
-        println(getvalue(LN))
-
         # TODO: temporary for debugging!
         # println("################")
         # for t=1:T
@@ -68,10 +63,6 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         orig_line_order = network.lines[:name]
         network.lines = lines
         lines[:s_nom_opt] = deepcopy(lines[:s_nom])
-        println(m[:LN_s_nom])
-        println(getvalue(m[:LN_s_nom]))
-        println(ext_lines_b)
-        println(network.lines[ext_lines_b,:s_nom_opt])
         network.lines[ext_lines_b,:s_nom_opt] = getvalue(m[:LN_s_nom])
         network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
         network.lines = select_names(network.lines, orig_line_order)

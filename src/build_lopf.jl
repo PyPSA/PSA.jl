@@ -3,6 +3,8 @@ using MathProgBase
 
 include("auxilliaries.jl")
 
+# TODO: needs cleansing after extraction of run_lopf.jl
+
 function build_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous")
     
     # This function is organized as the following:

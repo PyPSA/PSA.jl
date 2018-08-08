@@ -50,7 +50,6 @@ function align_component_order!(network)
     end
 end
 
-# auxilliary functions
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
@@ -251,9 +250,8 @@ function get_cycles(network)
     cycle_basis(g)
 end
 
-# following Taylor2015a
-# TODO: rename
-function get_line_paths(network)
+# following lift-and-project relaxation of Taylor2015a
+function get_shortest_line_paths(network)
     busidx = idx(network.buses)
 
     # create elist only for lines with s_nom > 0
@@ -264,6 +262,7 @@ function get_line_paths(network)
         end
     end
 
+    # create graph
     g = SimpleGraph(length(busidx))
     for e in elist add_edge!(g,e) end
 

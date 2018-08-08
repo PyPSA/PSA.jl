@@ -843,7 +843,6 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
-        # emmssions = Dict(zip(nonnull_carriers[:name], nonnull_carriers[:co2_emissions])) // unused
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
         @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
@@ -856,63 +855,25 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 # 8. set objective function
     println("Adding objective to the model.")
 
-    # TODO: This objective consider the total cost (capex of existing + capex of additional) of extensible components!
-    if objective == "total"
-        @objective(m, Min,
-                              sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                            + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
-                            + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+    @objective(m, Min,
+                          sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                        + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
+                        + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
-                            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-                            + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
+                        + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
+                        + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
 
-                            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
-                            + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
+                        + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
+                        + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
 
-                            + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
-                            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
-                            + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
+                        + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                        + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
+                        + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
 
-                            + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
-                            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-                            + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
-                    )
-
-    elseif objective == "extensions"
-        # !!! not working yet !!!
-        # TODO: Modify objective function such that only cost of extensions and opex is included.
-        # Reducing existing capacity currently saves money. This is wrong!
-        @objective(m, Min,
-                              sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                            + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] - generators[ext_gens_b,:p_nom])
-
-                            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:] - lines[ext_lines_b,:s_nom])
-
-                            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:] - links[ext_links_b,:p_nom])
-
-                            + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
-                            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:] - storage_units[ext_sus_b,:p_nom])
-
-                            + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
-                            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:] - stores[ext_stores_b,:e_nom])
-                    )
-    else # TODO: original objective; delete when other objectives tested.
-        @objective(m, Min,
-                              sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                            + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:]  )
-
-                            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-
-                            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
-
-                            + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
-                            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
-
-                            + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
-                            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-
-                    )
-    end
+                        + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                        + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
+                        + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+                )
 
     println("Finished building model.")
 

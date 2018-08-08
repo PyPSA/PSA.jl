@@ -8,13 +8,7 @@ using BlockDecomposition
 # --- LN_x_pu[l] = ( network.lines[:s_nom][l]  * network.lines[:x_pu][l] ) / LN_s_nom[l]
 # --- added to the master problem this is non-linear! - But linear with susceptance!
 # --- what would happen if x was updated everytime a master solution is handed to the master problem?
-# --- CPLEX cannot handle.
-
-# TODO:
-# gives correct results for 5-bus-network, but little slower
-# gives wrong results fir 37-bus-network (a lot), hits timeout of 60 seconds, maybe mistake in decomposition
-# How does CPLEX handle Benders exactly?
-# Read more about BlockDecomposition.jl
+# --- CPLEX cannot handle this, maybe need manual benders decomposition scheme.
 
 function build_block_lopf(network, solver; formulation::String="angles", objective::String="total",
                          investment_type::String="continuous", decomposition="benders")
@@ -45,7 +39,7 @@ function build_block_lopf(network, solver; formulation::String="angles", objecti
 
     elseif decomposition == "dantzig-wolfe"
 
-        # TODO: not implemented yet: assign constraints to subproblems
+        # TODO: not implemented yet: evaluate suitability + assign constraints to subproblems
 
         println("Apply Dantzig Wolfe Decomposition")
 

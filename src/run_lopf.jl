@@ -15,7 +15,6 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
 
     if status==:Optimal
 
-        # TODO: may be unneccesary (either here or in build_lopf)
         buses = network.buses
         lines = network.lines
         generators = network.generators
@@ -69,8 +68,6 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         network.lines[ext_lines_b,:s_nom_opt] = getvalue(m[:LN_s_nom])
         network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
         network.lines = select_names(network.lines, orig_line_order)
-
-        # network.buses_t["p"] =  DataFrame(ncols=nrow(network.buses))
 
         if nrow(links)>0
             orig_link_order = network.links[:name]

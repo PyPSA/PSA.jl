@@ -15,7 +15,7 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
 
     if status==:Optimal
 
-        # TODO: may be unneccesary(either here or in build_lopf)
+        # TODO: may be unneccesary (either here or in build_lopf)
         buses = network.buses
         lines = network.lines
         generators = network.generators
@@ -54,17 +54,7 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
         stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
 
-        # TODO: temporary for debugging!
-        # println("################")
-        # for t=1:T
-        #     for l=1:L
-        #         println(getvalue(THETA[busidx[lines[:bus0][l]], t]) - getvalue(THETA[busidx[lines[:bus1][l]], t]))
-        #     end
-        # end
-        # println(getvalue(THETA))
-        # println(getvalue(LN_inv))
-        # println("################")
-        # println("-----> ", dot(lines[ext_lines_b,:capital_cost], getvalue(LN_s_nom[:])) + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]))
+        println("The cost of transmission network are ", dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom])) + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]))
 
         orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])

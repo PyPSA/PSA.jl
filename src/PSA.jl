@@ -7,7 +7,7 @@ export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, t
 include("build_lopf.jl")
 include("build_block_lopf.jl")
 include("run_lopf.jl")
-include("run_iter_lopf.jl")
+include("run_iterative_lopf.jl")
 
 mutable struct network_mutable
     buses::DataFrame

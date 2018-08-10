@@ -303,9 +303,13 @@ function row_sum(df, row_id)
 end
 
 function get_iis(m::JuMP.Model)    
-    grb_model = MathProgBase.getrawsolver(getInternalModel(m))
+    grb_model = MathProgBase.getrawsolver(internalmodel(m))
     num_constrs = Gurobi.num_constrs(grb_model)
     Gurobi.computeIIS(grb_model)
     iis_constrs = Gurobi.get_intattrarray(grb_model, "IISConstr",  1, num_constrs)
     m.linconstr[find(iis_constrs)]
+end
+
+function get_slack(m::JuMP.Model)
+    Gurobi.get_dblattrarray( m.internalModel.inner, "Slack", 1, Gurobi.num_constrs(m.internalModel.inner))
 end

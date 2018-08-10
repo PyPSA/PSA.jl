@@ -139,12 +139,12 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     bigM_default = 1e4 # TODO: choose bigM default
 
     if investment_type == "continuous"
-        @variable(m, LN_inv[l=1:N_ext])
+        @variable(m, LN_inv[l=1:N_ext] >= 0) # TODO: remove bounds!
         #@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]) # if s_nom_step is specified and option "angles_bilinear_stepsspecs"
         @constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
 
     elseif investment_type == "integer"
-        @variable(m, LN_inv[l=1:N_ext], Int)
+        @variable(m, LN_inv[l=1:N_ext] >= 0, Int) # TODO: remove bounds! 
         #@constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]) # if s_nom_step is specified and option "angles_bilinear_stepsspecs
         @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
     
@@ -188,6 +188,34 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     #         [l=1:N_ext], 0 == LN_inv_2[l]
     #         [l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]
     #     end)
+
+    # TODO: not yet without mistakes!
+    elseif investment_type == "integer_binary_reformulation"
+        
+        candidates = Array{Int64,1}[]
+        if lines[:s_nom_max] == Inf || true # TODO: delete true
+            for l=1:N_ext
+                if l == 1
+                    push!(candidates,[i for i=50:60])
+                elseif l == 2
+                    push!(candidates,[i for i=50:60])
+                else 
+                    push!(candidates,[i for i=10:20])
+                end
+                #push!(candidates,[i for i=1:70])
+            end
+        else      
+            for l=1:N_ext
+                max_extension = floor.(lines[:s_nom_max] ./ lines[:s_nom])
+                push!(candidates,[i for i=1:max_extension])
+            end
+        end 
+
+        @variable(m, LN_opt[l=1:N_ext,c in candidates[l]], Bin)
+
+        @constraint(m, logical[l=1:N_ext], sum(LN_opt[l,c] for c in candidates[l]) == 1)
+
+        @constraint(m, integer_binary_reformulation[l=1:N_ext], LN_s_nom[l] == (sum(c*LN_opt[l,c] for c in candidates[l])) * lines[ext_lines_b,:s_nom][l])
 
     end
 
@@ -433,6 +461,45 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                                                         - THETA[busidx[lines[:bus1][l]], t]
                                                         )
         )
+
+        @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
+
+    elseif formulation == "angles_linear_integer_binary_reformulation" # TODO: rename
+
+        # voltage angles
+        @variable(m, THETA[1:N,1:T])
+
+        # load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, voltages[n=1:N, t=1:T], (
+
+                  sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                      .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+
+        for l=1:L
+            for c in candidates[l]
+                bigM = maximum(candidates[l])*lines[:s_nom][l]
+                println(bigM)
+                @constraints(m, begin 
+                    [t=1:T],    (bigM*(1-LN_opt[l,c]) 
+                                            + (c*lines[:x_pu][l]^(-1) )
+                                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= LN[l,t])
+                    [t=1:T],    (bigM*(LN_opt[l,c]-1) 
+                                            + (c*lines[:x_pu][l]^(-1) )
+                                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= LN[l,t])
+                end)
+            end
+        end
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
 
@@ -715,6 +782,92 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 @constraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
                         dot(directions[c] .* lines[cycles_branch[c], :x_pu],
                             LN[cycles_branch[c],t]) == 0)
+            # elseif attribute==:r
+            #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
+            #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
+            end
+        end
+
+    # angles_linear_integer_binary_reformulation
+    # TODO: not implemented yet
+    elseif formulation == "kirchhoff_linear_integer_binary_reformulation"
+
+        #load data in correct order
+        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+        @constraint(m, balance[n=1:N, t=1:T], (
+              sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+            + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
+            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                  .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+            - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
+            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+              == 0 ))
+
+        # TODO: Might be nessecary to loop over all subgraphs as
+        # for (sn, sub) in enumerate(weakly_connected_components(g))
+        #     g_sub = induced_subgraph(g, sub)[1]
+
+        append_idx_col!(lines)
+        (branches, var, attribute) = (lines, LN, :x)
+        cycles = get_cycles(network)
+        if ndims(cycles)<2
+            cycles = [cycle for cycle in cycles if length(cycle)>2]
+        else
+            cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
+        end
+        if length(cycles)>0
+            cycles_branch = Array{Int64,1}[]
+            directions = Array{Float64,1}[]
+            for cyc=1:length(cycles)
+                push!(cycles_branch,Int64[])
+                push!(directions,Float64[])
+                for bus=1:length(cycles[cyc])
+                    bus0 = cycles[cyc][bus]
+                    bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
+                    try
+                        push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
+                                    .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
+                        push!(directions[cyc], 1.)
+                    catch y
+                        if isa(y, BoundsError)
+                            push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
+                                            .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
+                            push!(directions[cyc], -1.)
+                        else
+                            return y
+                        end
+                    end
+                end
+            end
+            if attribute==:x
+                @constraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
+                        sum(      directions[c][l] 
+                                * lines[cycles_branch[c], :x_pu][l] 
+                                * (1+LN_inv[cycles_branch[c]][l])^(-1)
+                                * LN[cycles_branch[c],t][l]
+                           for l=1:length(directions[c])
+                           )               
+                            == 0)
+
+                        bigM = 1e2 # TODO: choose such that appropriate results given!!! maximum allowed flows with any extension!
+                        for l=1:L
+                            for c in candidates[l]
+                                @constraints(m, begin 
+                                    [t=1:T],    (bigM*(1-LN_opt[l,c]) 
+                                                            + (c*lines[:x_pu][l]^(-1) )
+                                                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= LN[l,t])
+                                    [t=1:T],    (bigM*(LN_opt[l,c]-1) 
+                                                            + (c*lines[:x_pu][l]^(-1) )
+                                                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= LN[l,t])
+                                end)
+                            end
+                        end
             # elseif attribute==:r
             #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
             #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)

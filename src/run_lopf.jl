@@ -97,6 +97,7 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         end
         align_component_order!(network)
         println("Reduce cost to $(m.objVal)")
+
     end
 
     return m

@@ -310,6 +310,29 @@ function get_iis(m::JuMP.Model)
     m.linconstr[find(iis_constrs)]
 end
 
+# if slack is zero, relaxation would improve results
 function get_slack(m::JuMP.Model)
     Gurobi.get_dblattrarray( m.internalModel.inner, "Slack", 1, Gurobi.num_constrs(m.internalModel.inner))
+end
+
+# active constraints are constraints with no slack
+function get_active_constraints(m::JuMP.Model)
+
+    slack = get_slack(m)
+    
+    function within_tolerance(x)
+        (x <= 1e-9 && x >= -1e-9)
+    end
+    
+    sort(collect(Set(find(within_tolerance,slack))))
+end
+
+function print_active_constraints!(m::JuMP.Model)
+
+    active_constraints = get_active_constraints(m)
+
+    for ac in active_constraints
+        println(round(slack[c],5),"\t\t",modelc.linconstr[c])
+    end
+
 end

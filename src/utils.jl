@@ -332,7 +332,7 @@ function print_active_constraints!(m::JuMP.Model)
     active_constraints = get_active_constraints(m)
 
     for ac in active_constraints
-        println(round(slack[c],5),"\t\t",modelc.linconstr[c])
+        println(round(slack[c],5),"\t\t",m.linconstr[c])
     end
 
 end

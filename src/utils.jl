@@ -302,7 +302,7 @@ function row_sum(df, row_id)
     end
 end
 
-function get_iis(m::JuMP.Model)    
+function get_iis(m::JuMP.Model)
     grb_model = MathProgBase.getrawsolver(internalmodel(m))
     num_constrs = Gurobi.num_constrs(grb_model)
     Gurobi.computeIIS(grb_model)
@@ -329,10 +329,11 @@ end
 
 function print_active_constraints!(m::JuMP.Model)
 
+    slack = get_slack(m)
     active_constraints = get_active_constraints(m)
 
     for ac in active_constraints
-        println(round(slack[c],5),"\t\t",m.linconstr[c])
+        println(round(slack[ac],5),"\t\t",m.linconstr[ac])
     end
 
 end

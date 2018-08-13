@@ -1,6 +1,6 @@
 module PSA
 
-using DataFrames, CSV, LightGraphs
+using DataFrames, CSV, LightGraphs, Gurobi
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 

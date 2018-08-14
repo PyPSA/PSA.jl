@@ -171,6 +171,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 push!(candidates,[i for i=1:10])
             end
         end
+        println(candidates)
 
         @variable(m, LN_opt[l=1:N_ext,c in candidates[l]], Bin)
 

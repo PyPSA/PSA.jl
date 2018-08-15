@@ -1,4 +1,4 @@
-function run_iterative_lopf(network, solver, iterations; formulation::String="angles", objective::String="total", investment_type::String="continuous")
+function run_iterative_lopf(network, solver, iterations; formulation::String="angles", objective::String="total", investment_type::String="continuous", post_discretization::Bool=false, discretization_threshold::Float64=0.3)
 
     x_0 = deepcopy(network.lines[:x])
     s_nom_0 = deepcopy(network.lines[:s_nom])
@@ -35,12 +35,44 @@ function run_iterative_lopf(network, solver, iterations; formulation::String="an
                 end
             end
         end
-
+            
         # debug
         println("x_$k (after) = $(network.lines[:x])")
-
+            
     end
 
+    # perform post discretization if selected
+    if post_discretization
+
+        for l=1:nrow(network.lines)
+
+            if network.lines[:s_nom_extendable][l]
+
+                extension_factor = network.lines[:s_nom_opt][l] / s_nom_0[l]
+                if mod(extension_factor,1) >= discretization_threshold 
+                    extension_factor = ceil(extension_factor)
+                else 
+                    extension_factor = floor(extension_factor)
+                end
+
+                network.lines[:x][l] = x_0[l] / extension_factor
+                network.lines[:s_nom_opt][l] = s_nom_0[l] * extension_factor
+                network.lines[:s_nom][l] = network.lines[:s_nom_opt][l]
+
+                # fix line capacity
+                network.lines[:s_nom_extendable][l] = false   
+            
+            end
+            
+        end
+        println(network.lines[:s_nom])
+
+        # need to run once with fixed line ratings to get line flows
+        m = run_lopf(network, solver; formulation="angles_linear", objective=objective, investment_type="continuous")
+        println(network.lines[:s_nom])
+    end
+
+    # return model and iteration data
     return m, [objectives, capacities, reactances]
 
 end

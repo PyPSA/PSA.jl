@@ -48,28 +48,26 @@ function run_iterative_lopf(network, solver, iterations; formulation::String="an
 
             if network.lines[:s_nom_extendable][l]
 
-                extension_factor = network.lines[:s_nom_opt][l] / s_nom_0[l]
-                if mod(extension_factor,1) >= discretization_threshold 
-                    extension_factor = ceil(extension_factor)
+                num_parallel_extension = (network.lines[:s_nom_opt][l] / s_nom_0[l] - 1) * network.lines[:num_parallel][l]
+                if mod(num_parallel_extension,1) >= discretization_threshold 
+                    num_parallel_extension = ceil(num_parallel_extension)
                 else 
-                    extension_factor = floor(extension_factor)
+                    num_parallel_extension = floor(num_parallel_extension)
                 end
 
+                extension_factor = (num_parallel_extension / network.lines[:num_parallel][l]+1)
                 network.lines[:x][l] = x_0[l] / extension_factor
                 network.lines[:s_nom_opt][l] = s_nom_0[l] * extension_factor
                 network.lines[:s_nom][l] = network.lines[:s_nom_opt][l]
-
-                # fix line capacity
                 network.lines[:s_nom_extendable][l] = false   
             
             end
             
         end
-        println(network.lines[:s_nom])
 
         # need to run once with fixed line ratings to get line flows
         m = run_lopf(network, solver; formulation="angles_linear", objective=objective, investment_type="continuous")
-        println(network.lines[:s_nom])
+
     end
 
     # return model and iteration data

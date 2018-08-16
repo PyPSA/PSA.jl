@@ -133,22 +133,23 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     # 2.5 add integer variables if applicable
     #println("-- 2.5 add integer variables if applicable")
-
-    bigM_default = 1e4 # TODO: choose bigM default
-
+    
     if investment_type == "continuous"
         @variable(m, LN_inv[l=1:N_ext]) 
         #@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]) # if s_nom_step is specified and option "angles_bilinear_stepsspecs"
-        @constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
-
+        #--@@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
+        constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l])
+        
     elseif investment_type == "integer"
         @variable(m, LN_inv[l=1:N_ext], Int) 
         #@constraint(m, integer[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]) # if s_nom_step is specified and option "angles_bilinear_stepsspecs
-        @constraint(m, integer[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
-    
-    # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
-    # apart from that investment is continuous
+        #--@@constraint(m, integer[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
+        @constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l])
+        
+        # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
+        # apart from that investment is continuous
     elseif investment_type == "binary"
+        bigM_default = 1e4 # TODO: choose bigM default
         bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])
@@ -156,7 +157,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
             binary1[l=1:N_ext], - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv[l]
             binary2[l=1:N_ext], 0 <= LN_inv[l] # no reduction of capacity allowed
             binary3[l=1:N_ext],  bigM[l] * LN_opt[l] >= LN_inv[l]
-            binary4[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l]
+            #--binary4[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l]
+            binary4[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
         end)
 
     elseif investment_type == "integer_bigm"
@@ -164,7 +166,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
         candidates = Array{Int64,1}[]
         for l=1:N_ext
             if lines[:s_nom_max][l] != Inf
-                max_extension = floor(lines[:s_nom_max][l] / lines[:s_nom][l])
+                max_extension_float = (lines[:s_nom_max][l] / lines[:s_nom][l] - 1) * lines[:num_parallel][l]
+                max_extension = floor(max_extension_float) 
                 push!(candidates,[i for i=1:max_extension])
             else
                 # fallback option
@@ -175,10 +178,11 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
         @variable(m, LN_opt[l=1:N_ext,c in candidates[l]], Bin)
 
-        @constraint(m, logical[l=1:N_ext], sum(LN_opt[l,c] for c in candidates[l]) == 1)
+        @constraint(m, logical[l=1:N_ext], sum(LN_opt[l,c] for c in candidates[l]) <= 1)
 
-        @constraint(m, integer_binary_reformulation[l=1:N_ext], LN_s_nom[l] == (sum(c*LN_opt[l,c] for c in candidates[l])) * lines[ext_lines_b,:s_nom][l])
-
+        #--@constraint(m, integer_binary_reformulation[l=1:N_ext], LN_s_nom[l] == (sum(c*LN_opt[l,c] for c in candidates[l])) * lines[ext_lines_b,:s_nom][l])
+        @constraint(m, integer_binary_reformulation[l=1:N_ext], LN_s_nom[l] == (1+sum(c*LN_opt[l,c] for c in candidates[l]) / lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l])
+        
     end
 
     LN = [LN_fix; LN_ext]
@@ -447,53 +451,51 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
                 - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        for l=1:L
-            for c in candidates[l]
-                bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-                bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-                @constraints(m, begin 
-                    [t=1:T],    (bigM_upper*(1-LN_opt[l,c]) 
-                                            + (c*lines[:x_pu][l]^(-1) )
-                                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] >= 0)
-                    [t=1:T],    (bigM_lower*(LN_opt[l,c]-1) 
-                                            + (c*lines[:x_pu][l]^(-1) )
-                                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] <= 0)
-                end)
-            end
-        end
+        #bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
+        #bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
+        @constraint(m, flows_upper[l=1:sum(ext_lines_b),c in candidates[l],t=1:T], ((maximum(lines[:num_parallel][l].+candidates[l])*lines[:s_nom][l] + maximum(lines[:num_parallel][l].+candidates[l])*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
+                                    + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
+                                    *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] >= 0)
+        @constraint(m, flows_lower[l=1:sum(ext_lines_b),c in candidates[l],t=1:T], ((maximum(lines[:num_parallel][l].+candidates[l])*lines[:s_nom][l] + minimum(lines[:num_parallel][l].+candidates[l])*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
+                                    + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
+                                    *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] <= 0)
+        @constraint(m, flows_nonext[l=(sum(ext_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+        ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )   
+        
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
 
-    # a.2 bilinear angles formulation (steps for x and s_nom separately specified)
-    elseif formulation == "angles_bilinear_stepsspecs"
+    # # a.2 bilinear angles formulation (steps for x and s_nom separately specified)
+    # elseif formulation == "angles_bilinear_stepsspecs"
 
-        # cannot be solved by Gurobi, needs Ipopt!
-        # needs investment_type defined!
+    #     # TODO: unify with angles_bilinear
+    #     # cannot be solved by Gurobi, needs Ipopt!
+    #     # needs investment_type defined!
 
-        # voltage angles
-        @variable(m, THETA[1:N,1:T])
+    #     # voltage angles
+    #     @variable(m, THETA[1:N,1:T])
 
-        # load data in correct order
-        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+    #     # load data in correct order
+    #     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-        @constraint(m, voltages[n=1:N, t=1:T], (
+    #     @constraint(m, voltages[n=1:N, t=1:T], (
 
-                  sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                      .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    #               sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+    #             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+    #                   .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+    #             + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    #             - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+    #             - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+    #             - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+    #             == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+    #             - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  (lines[:x_pu][l]^(-1) + lines[:x_step_pu][l]^(-1) * LN_inv[l]) *
-                                                           (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
+    #     @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  (lines[:x_pu][l]^(-1) + lines[:x_step_pu][l]^(-1) * LN_inv[l]) *
+    #                                                        (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
 
-        @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+    #     @constraint(m, slack[t=1:T], THETA[1,t] == 0)
 
     # a.3 bilinear angles formulation (steps derived from original s_nom and x)
     elseif formulation == "angles_bilinear"
@@ -522,166 +524,170 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  (1+LN_inv[l])*lines[:x_pu][l]^(-1) *
+        #--@NLconstraint(m, flows_ext[l=1:L, t=1:T], LN[l, t] ==  (1+LN_inv[l])*lines[:x_pu][l]^(-1) *
+        #        (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
+        @NLconstraint(m, flows_ext[l=1:sum(ext_lines_b), t=1:T], LN[l, t] ==  (1+LN_inv[l] / lines[:num_parallel][l])*lines[:x_pu][l]^(-1) *
                                                            (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
+        @constraint(m, flows_nonext[l=(sum(ext_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+                                                        ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )                                                   
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0)
 
-    # a.4 linear angles formulation (with McCormick relaxation)
-    elseif formulation == "angles_relaxation_mccormick"
+    # # a.4 linear angles formulation (with McCormick relaxation)
+    # elseif formulation == "angles_relaxation_mccormick"
 
-        # needs investment_type defined!
+    #     # needs investment_type defined!
 
-        # variables
-        @variable(m, THETA[1:N,1:T])
-        @variable(m, AUX_mu[1:L,1:T])
-        @variable(m, AUX_xi[1:L,1:T])
+    #     # variables
+    #     @variable(m, THETA[1:N,1:T])
+    #     @variable(m, AUX_mu[1:L,1:T])
+    #     @variable(m, AUX_xi[1:L,1:T])
 
-        # load data in correct order
-        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+    #     # load data in correct order
+    #     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-        @constraint(m, anglediff[l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+    #     @constraint(m, anglediff[l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
 
-        max_angle_diff = pi / 6 
-        min_angle_diff = -max_angle_diff
+    #     max_angle_diff = pi / 6 
+    #     min_angle_diff = -max_angle_diff
 
-        @constraints(m, begin
-            anglediff_upper_limit[l=1:L,t=1:T], AUX_xi[l,t] <= max_angle_diff
-            anglediff_lower_limit[l=1:L,t=1:T], AUX_xi[l,t] >= min_angle_diff
-        end )
+    #     @constraints(m, begin
+    #         anglediff_upper_limit[l=1:L,t=1:T], AUX_xi[l,t] <= max_angle_diff
+    #         anglediff_lower_limit[l=1:L,t=1:T], AUX_xi[l,t] >= min_angle_diff
+    #     end )
 
-        @constraint(m, voltages[n=1:N, t=1:T], 
+    #     @constraint(m, voltages[n=1:N, t=1:T], 
         
-                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    #                 sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+    #             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+    #                     .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+    #             + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    #             - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+    #             - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+    #             - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                   - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )
+    #             == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+    #                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )
 
-        @constraint(m, flows[l=1:L, t=1:T], 
-            LN[l, t] == lines[:x_pu][l]^(-1) * AUX_xi[l,t]
-                        + lines[:x_step_pu][l]^(-1) * AUX_mu[l,t]
-        ) 
+    #     @constraint(m, flows[l=1:L, t=1:T], 
+    #         LN[l, t] == lines[:x_pu][l]^(-1) * AUX_xi[l,t]
+    #                     + lines[:x_step_pu][l]^(-1) * AUX_mu[l,t]
+    #     ) 
 
-        inv_min = zeros(L)
-        inv_max = zeros(L)
-        for l=1:L
-            inv_min[l] = (lines[:s_nom_min][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
-            inv_max[l] = (lines[:s_nom_max][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
-        end
+    #     inv_min = zeros(L)
+    #     inv_max = zeros(L)
+    #     for l=1:L
+    #         inv_min[l] = (lines[:s_nom_min][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
+    #         inv_max[l] = (lines[:s_nom_max][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
+    #     end
         
-        @constraints(m, begin
-            mccormick1[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
-                            + LN_inv[l] * min_angle_diff
-                            - inv_min[l] * min_angle_diff)
-            mccormick2[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
-                            + LN_inv[l] * max_angle_diff
-                            - inv_max[l] * max_angle_diff)
-            mccormick3[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
-                            + LN_inv[l] * min_angle_diff
-                            - inv_max[l] * min_angle_diff)
-            mccormick4[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
-                            + LN_inv[l] * max_angle_diff
-                            - inv_min[l] * max_angle_diff)
-        end)
+    #     @constraints(m, begin
+    #         mccormick1[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
+    #                         + LN_inv[l] * min_angle_diff
+    #                         - inv_min[l] * min_angle_diff)
+    #         mccormick2[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
+    #                         + LN_inv[l] * max_angle_diff
+    #                         - inv_max[l] * max_angle_diff)
+    #         mccormick3[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
+    #                         + LN_inv[l] * min_angle_diff
+    #                         - inv_max[l] * min_angle_diff)
+    #         mccormick4[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
+    #                         + LN_inv[l] * max_angle_diff
+    #                         - inv_min[l] * max_angle_diff)
+    #     end)
 
-        @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+    #     @constraint(m, slack[t=1:T], THETA[1,t] == 0)
 
-    # a.5 linear angles formulation (with relaxation following Taylor2015a)
-    elseif formulation == "angles_relaxation_taylor2015a"
+    # # a.5 linear angles formulation (with relaxation following Taylor2015a)
+    # elseif formulation == "angles_relaxation_taylor2015a"
 
-        # not working yet
+    #     # TODO: not working yet
 
-        inv_max = zeros(L)
-        for l=1:L
-            inv_max[l] = (lines[:s_nom_max][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
-        end
+    #     inv_max = zeros(L)
+    #     for l=1:L
+    #         inv_max[l] = (lines[:s_nom_max][l] - lines[:s_nom][l]) / lines[:s_nom_step][l]
+    #     end
 
-        # variables
-        @variable(m, THETA[1:N,1:T])
-        @variable(m, AUX_XI[1:L,1:T])
+    #     # variables
+    #     @variable(m, THETA[1:N,1:T])
+    #     @variable(m, AUX_XI[1:L,1:T])
 
-        # load data in correct order
-        loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+    #     # load data in correct order
+    #     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-        # (2)
-        @constraint(m, voltages[n=1:N, t=1:T], (
+    #     # (2)
+    #     @constraint(m, voltages[n=1:N, t=1:T], (
 
-                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    #                 sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+    #             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+    #                     .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+    #             + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    #             - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+    #             - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+    #             - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                   - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+    #             == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+    #                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        # (2)
-        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
-                                                        ( THETA[busidx[lines[:bus0][l]], t]
-                                                        - THETA[busidx[lines[:bus1][l]], t]
-                                                        )
+    #     # (2)
+    #     @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+    #                                                     ( THETA[busidx[lines[:bus0][l]], t]
+    #                                                     - THETA[busidx[lines[:bus1][l]], t]
+    #                                                     )
 
-                                                      + AUX_XI[l,t] )
+    #                                                   + AUX_XI[l,t] )
 
-        @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+    #     @constraint(m, slack[t=1:T], THETA[1,t] == 0)
 
-        # (1)
-        L_existing = Int64[]
-        for l=1:L
-            if lines[:s_nom][l] > 0
-                push!(L_existing, l)
-            end
-        end
+    #     # (1)
+    #     L_existing = Int64[]
+    #     for l=1:L
+    #         if lines[:s_nom][l] > 0
+    #             push!(L_existing, l)
+    #         end
+    #     end
 
-        @constraints(m, begin
-            [l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
-                            ( THETA[busidx[lines[:bus0][l]], t]
-                            - THETA[busidx[lines[:bus1][l]], t]
-                            ) <= lines[:s_nom][l]
+    #     @constraints(m, begin
+    #         temp1[l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
+    #                         ( THETA[busidx[lines[:bus0][l]], t]
+    #                         - THETA[busidx[lines[:bus1][l]], t]
+    #                         ) <= lines[:s_nom][l]
 
-            [l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
-                            ( THETA[busidx[lines[:bus1][l]], t]
-                            - THETA[busidx[lines[:bus0][l]], t]
-                            ) >= lines[:s_nom][l]
-            end
-        )
+    #         temp2[l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
+    #                         ( THETA[busidx[lines[:bus1][l]], t]
+    #                         - THETA[busidx[lines[:bus0][l]], t]
+    #                         ) >= lines[:s_nom][l]
+    #         end
+    #     )
 
-        # (4)
-        @constraints(m, begin
-            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:s_nom_step][l] * LN_inv[l]
-            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:s_nom_step][l] * LN_inv[l]
-        end )
+    #     # (4)
+    #     @constraints(m, begin
+    #         [l=1:L, t=T],  AUX_XI[l,t] <= lines[:s_nom_step][l] * LN_inv[l]
+    #         [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:s_nom_step][l] * LN_inv[l]
+    #     end )
 
-        # calculate Ms
-        line_paths = get_line_paths(network)
-        m_factor = zeros(L)
-        for l=1:L
-            for k in line_paths[l]
-                m_factor[l] += lines[:s_nom_step][k] * lines[:x_step_pu][k]
-            end
-        end
+    #     # calculate Ms
+    #     line_paths = get_line_paths(network)
+    #     m_factor = zeros(L)
+    #     for l=1:L
+    #         for k in line_paths[l]
+    #             m_factor[l] += lines[:s_nom_step][k] * lines[:x_step_pu][k]
+    #         end
+    #     end
 
-        # (3)
-        @constraints(m, begin
-            [l=1:L, t=T],  AUX_XI[l,t] <= lines[:x_step_pu][l]^(-1) * LN_inv[l] * m_factor[l]
-            [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:x_step_pu][l]^(-1) * LN_inv[l] * m_factor[l]
-        end )
+    #     # (3)
+    #     @constraints(m, begin
+    #         [l=1:L, t=T],  AUX_XI[l,t] <= lines[:x_step_pu][l]^(-1) * LN_inv[l] * m_factor[l]
+    #         [l=1:L, t=T],  AUX_XI[l,t] >= (-1) * lines[:x_step_pu][l]^(-1) * LN_inv[l] * m_factor[l]
+    #     end )
 
-        # (5)
-        @constraints(m, begin
-            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step_pu][l]^(-1) * inv_max[l] * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= lines[:x_step_pu][l]^(-1) * m_factor[l] * (inv_max[l] - LN_inv[l])
-            [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step_pu][l]^(-1) * inv_max[l] * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= (-1) * ( lines[:x_step_pu][l]^(-1) * m_factor[l] * (inv_max[l] - LN_inv[l]) )
-        end )
+    #     # (5)
+    #     @constraints(m, begin
+    #         [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step_pu][l]^(-1) * inv_max[l] * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) <= lines[:x_step_pu][l]^(-1) * m_factor[l] * (inv_max[l] - LN_inv[l])
+    #         [l=1:L, t=T],  AUX_XI[l,t] - lines[:x_step_pu][l]^(-1) * inv_max[l] * ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) >= (-1) * ( lines[:x_step_pu][l]^(-1) * m_factor[l] * (inv_max[l] - LN_inv[l]) )
+    #     end )
 
     # b.1 linear kirchhoff formulation
     elseif formulation == "kirchhoff_linear"
@@ -813,7 +819,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 @NLconstraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
                         sum(      directions[c][l] 
                                 * lines[cycles_branch[c], :x_pu][l] 
-                                * (1+LN_inv[cycles_branch[c]][l])^(-1)
+                                * (1+LN_inv[cycles_branch[c]][l] / lines[cycles_branch[c], :num_parallel][l])^(-1)
+                                #--* (1+LN_inv[cycles_branch[c]][l])^(-1)
                                 * LN[cycles_branch[c],t][l]
                            for l=1:length(directions[c])
                            )               

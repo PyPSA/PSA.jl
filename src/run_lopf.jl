@@ -5,7 +5,7 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
 
     if blockmodel
         println("Build block JuMP model.")
-        m = build_block_lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type,decomposition=decomposition)
+        m = build_block_lopf(network, solver; formulation=formulation, investment_type=investment_type,decomposition=decomposition)
     else
         println("Build ordinary JuMP model.")
         m = build_lopf(network, solver; formulation=formulation, objective=objective, investment_type=investment_type)

@@ -10,12 +10,11 @@ using BlockDecomposition
 # --- what would happen if x was updated everytime a master solution is handed to the master problem?
 # --- CPLEX cannot handle this, maybe need manual benders decomposition scheme.
 
-function build_block_lopf(network, solver; formulation::String="angles", objective::String="total",
+function build_block_lopf(network, solver; formulation::String="angles_linear",
                          investment_type::String="continuous", decomposition="benders")
 
     m = build_lopf(network, solver;
                    formulation=formulation,
-                   objective=objective,
                    investment_type=investment_type, blockmodel=true)
 
     if decomposition == "benders"

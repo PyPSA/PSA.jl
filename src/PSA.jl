@@ -143,7 +143,7 @@ function Network(
 end
 
 
-function import_network(folder)
+function import_network(folder; round_num_parallel::Bool=false)
     network = Network()
     !ispath("$folder") ? error("Path not existent") : nothing
     components = static_components(network)
@@ -199,6 +199,14 @@ function import_network(folder)
     for field=setdiff(fieldnames(network), fieldnames(initializer))
         setfield!(network, field, getfield(initializer, field))
     end
+
+    # TODO: this should be temporary, as it changes the line type!
+    if round_num_parallel
+        for l=1:nrow(network.lines)
+            network.lines[:num_parallel][l] = round(network.lines[:num_parallel][l])
+        end
+    end
+
     return network
 end
 

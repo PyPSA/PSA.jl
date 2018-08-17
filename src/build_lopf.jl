@@ -137,8 +137,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     if investment_type == "continuous"
         @variable(m, LN_inv[l=1:N_ext]) 
         #@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]) # if s_nom_step is specified and option "angles_bilinear_stepsspecs"
-        #--@@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
-        constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l])
+        #--@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]) * lines[ext_lines_b,:s_nom][l])
+        @constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == (1+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l])
         
     elseif investment_type == "integer"
         @variable(m, LN_inv[l=1:N_ext], Int) 
@@ -168,17 +168,17 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
             if lines[:s_nom_max][l] != Inf
                 max_extension_float = (lines[:s_nom_max][l] / lines[:s_nom][l] - 1) * lines[:num_parallel][l]
                 max_extension = floor(max_extension_float) 
-                push!(candidates,[i for i=1:max_extension])
+                push!(candidates,[i for i=0:max_extension]) # starts from 0 as no extension is also an
             else
                 # fallback option
-                push!(candidates,[i for i=1:10])
+                push!(candidates,[i for i=0:10]) # starts from 0 as no extension is also an
             end
         end
         println(candidates)
 
         @variable(m, LN_opt[l=1:N_ext,c in candidates[l]], Bin)
 
-        @constraint(m, logical[l=1:N_ext], sum(LN_opt[l,c] for c in candidates[l]) <= 1)
+        @constraint(m, logical[l=1:N_ext], sum(LN_opt[l,c] for c in candidates[l]) == 1)
 
         #--@constraint(m, integer_binary_reformulation[l=1:N_ext], LN_s_nom[l] == (sum(c*LN_opt[l,c] for c in candidates[l])) * lines[ext_lines_b,:s_nom][l])
         @constraint(m, integer_binary_reformulation[l=1:N_ext], LN_s_nom[l] == (1+sum(c*LN_opt[l,c] for c in candidates[l]) / lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l])
@@ -453,14 +453,14 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
         #bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
         #bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-        @constraint(m, flows_upper[l=1:sum(ext_lines_b),c in candidates[l],t=1:T], ((maximum(lines[:num_parallel][l].+candidates[l])*lines[:s_nom][l] + maximum(lines[:num_parallel][l].+candidates[l])*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
+        @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=1:T], (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] + (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
                                     + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
                                     *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] >= 0)
-        @constraint(m, flows_lower[l=1:sum(ext_lines_b),c in candidates[l],t=1:T], ((maximum(lines[:num_parallel][l].+candidates[l])*lines[:s_nom][l] + minimum(lines[:num_parallel][l].+candidates[l])*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
+        @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=1:T], (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
                                     + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
                                     *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] <= 0)
-        @constraint(m, flows_nonext[l=(sum(ext_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
-        ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )   
+        @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+                                    ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )   
         
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
@@ -526,9 +526,9 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
         #--@NLconstraint(m, flows_ext[l=1:L, t=1:T], LN[l, t] ==  (1+LN_inv[l])*lines[:x_pu][l]^(-1) *
         #        (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
-        @NLconstraint(m, flows_ext[l=1:sum(ext_lines_b), t=1:T], LN[l, t] ==  (1+LN_inv[l] / lines[:num_parallel][l])*lines[:x_pu][l]^(-1) *
+        @NLconstraint(m, flows_ext[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)), t=1:T], LN[l, t] ==  (1+LN_inv[l] / lines[:num_parallel][l])*lines[:x_pu][l]^(-1) *
                                                            (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
-        @constraint(m, flows_nonext[l=(sum(ext_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+        @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
                                                         ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )                                                   
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0)

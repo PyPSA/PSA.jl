@@ -143,7 +143,7 @@ function Network(
 end
 
 
-function import_network(folder; round_num_parallel::Bool=false)
+function import_network(folder; round_num_parallel::Bool=false, fix_all_except_lines::Bool=false)
     network = Network()
     !ispath("$folder") ? error("Path not existent") : nothing
     components = static_components(network)
@@ -200,10 +200,20 @@ function import_network(folder; round_num_parallel::Bool=false)
         setfield!(network, field, getfield(initializer, field))
     end
 
-    # TODO: this should be temporary, as it changes the line type!
+    # TODO: fallback option, as it changes the line type!
     if round_num_parallel
         for l=1:nrow(network.lines)
-            network.lines[:num_parallel][l] = round(network.lines[:num_parallel][l])
+            network.lines[:num_parallel][l] = max(1,round(network.lines[:num_parallel][l]))
+        end
+    end
+
+    # TODO: temporary auxiliary funciton
+    if fix_all_except_lines
+        for l=1:nrow(network.generators)
+            network.generators[:p_nom_extendable][l] = false
+        end
+        for l=1:nrow(network.storage_units)
+            network.storage_units[:p_nom_extendable][l] = false
         end
     end
 

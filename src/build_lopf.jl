@@ -149,7 +149,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
         # if investment in line is chosen, it must be above a minimum threshold s_nom_ext_min
         # apart from that investment is continuous
     elseif investment_type == "binary"
-        bigM_default = 1e4 # TODO: choose bigM default
+        bigM_default = 1e4
         bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
         @variable(m, LN_opt[l=1:N_ext], Bin)
         @variable(m, LN_inv[l=1:N_ext])

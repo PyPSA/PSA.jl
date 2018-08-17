@@ -68,7 +68,7 @@ print(m.objVal)
 
 ## Licence
 
-Copyright 2017-2018 Fabian Hofmann (FIAS), Tom Brown (KIT IAI)
+Copyright 2017-2018 Fabian Hofmann (FIAS), Tom Brown (KIT IAI), Fabian Neumann (KIT IAI)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

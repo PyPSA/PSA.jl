@@ -4,6 +4,7 @@ using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets, DataArrays
 
 export Network, import_nc, export_nc
 
+include("lopf_pathway.jl")
 include("lopf.jl")
 # include("auxilliaries.jl") #don't know why but otherwise some functions are not imported
 
@@ -28,6 +29,7 @@ mutable struct network_mutable
     stores_t::Dict{String,AxisArray}
     transformers_t::Dict{String,AxisArray}
     snapshots::Array
+    snapshot_weightings::AxisArray
     name::String
 end
 
@@ -45,12 +47,12 @@ function Network(
 
     generators = AxisArray(repeat(Any[], inner=(1,31)), 
             Axis{:row}(String[]),
-            string.([:name, :bus, :control, :type, :p_nom, :p_nom_extendable,
+            string.([:name, :bus, :control, :type, :p_nom, :p_nom_extendable, :p_nom_opt,
             :p_nom_min, :p_nom_max, :p_min_pu, :p_max_pu, :p_set, :q_set,
             :sign, :carrier, :marginal_cost, :capital_cost, :efficiency,
             :committable, :start_up_cost, :shut_down_cost, :min_up_time,
             :min_down_time, :initial_status, :ramp_limit_up, :ramp_limit_down,
-            :ramp_limit_start_up, :ramp_limit_shut_down, :p, :q, :p_nom_opt, :status])),
+            :ramp_limit_start_up, :ramp_limit_shut_down, :p, :q, :status])),
 
     global_constraints = AxisArray(repeat(Any[], inner=(1,6)), 
             Axis{:row}(String[]),
@@ -122,7 +124,8 @@ function Network(
             [("marginal_price",AxisArray([])), ("v_ang", AxisArray([])),
             ("v_mag_pu_set",AxisArray([])), ("q", AxisArray([])),
             ("v_mag_pu", AxisArray([])), ("p", AxisArray([])),
-            ("p_min_pu", AxisArray([])), ("p_max_pu", AxisArray([]))
+            ("p_min_pu", AxisArray([])), ("p_max_pu", AxisArray([])),
+            ("p_nom_opt", AxisArray([]))
             ]),
     loads_t=Dict{String,AxisArray}([
             ("q_set",AxisArray([])), ("p_set", AxisArray([])),
@@ -146,13 +149,14 @@ function Network(
         ("p1", AxisArray([])), ("mu_upper", AxisArray([])), ("mu_lower", AxisArray([])),
         ("s_max_pu", AxisArray([]))]),
     snapshots=Array([]), 
+    snapshot_weightings = AxisArray(Any[], Axis{:row}(String[])),
     name = "PSA network"
     )
     network_mutable(
         buses, generators, loads, lines, links, storage_units, stores, transformers, carriers,
         global_constraints,
-        buses_t, generators_t, loads_t, lines_t, links_t, storage_units_t, stores_t, transformers_t,
-        snapshots,name);
+        buses_t, generators_t, loads_t, lines_t, links_t, sttrage_units_t, stores_t, transformers_t,
+        snapshots, snapshot_weightings, name);
 end
 
 

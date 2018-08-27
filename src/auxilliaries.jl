@@ -2,6 +2,7 @@ using LightGraphs
 using PyCall
 using Missings
 using DataFrames
+using AxisArrays
 const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
@@ -61,7 +62,11 @@ function calculate_dependent_values!(n)
         !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1]),1), col) : df
     end
 
-    #buses
+    # snapshot_weighting
+    (length(n.snapshot_weightings)==0?
+        n.snapshot_weightings = AxisArray(fill(1, size(n.snapshots)[1]),Axis{:row}(n.snapshots)) : nothing)
+    
+        #buses
     defaults = [("v_nom", 1.)]
     for (col, default) in defaults
         n.buses = set_default(n.buses, col, default)
@@ -188,7 +193,7 @@ function assign(df::AxisArray, values, index; axis=1)
                     Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
     elseif axis==2
         AxisArray([df.data; values'], 
-                    Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index...)),  
+                    Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index)),  
                     axes(df)[2])
     end
 end

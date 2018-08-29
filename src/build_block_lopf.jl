@@ -11,7 +11,7 @@ using BlockDecomposition
 # --- CPLEX cannot handle this, maybe need manual benders decomposition scheme.
 
 function build_block_lopf(network, solver; formulation::String="angles_linear",
-                         investment_type::String="continuous", decomposition="benders")
+                         investment_type::String="continuous", decomposition::String="benders")
 
     m = build_lopf(network, solver;
                    formulation=formulation,

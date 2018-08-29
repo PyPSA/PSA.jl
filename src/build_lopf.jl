@@ -119,7 +119,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     # 2.3 add variables
     #println("-- 2.3 add variables")
     @variables m begin
-        -lines[fix_lines_b,:s_nom][l]  <=  LN_fix[l=1:N_fix,t=1:T] <= lines[fix_lines_b,:s_nom][l]
+        -lines[fix_lines_b,:s_nom][l]*lines[fix_lines_b,:s_max_pu][l]  <=  LN_fix[l=1:N_fix,t=1:T] <= lines[fix_lines_b,:s_max_pu][l]*lines[fix_lines_b,:s_nom][l]
         LN_ext[l=1:N_ext,t=1:T]
         lines[ext_lines_b,:s_nom_min][l] <=  LN_s_nom[l=1:N_ext] <= lines[ext_lines_b,:s_nom_max][l]
     end
@@ -127,8 +127,8 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     # 2.4 add line constraint for extendable lines
     #println("-- 2.4 add line constraint for extendable lines")
     @constraints(m, begin
-            upper_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] <=  LN_s_nom[l]
-            lower_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] >= -LN_s_nom[l]
+            upper_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] <=  lines[:s_max_pu][l]*LN_s_nom[l]
+            lower_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] >= -lines[:s_max_pu][l]*LN_s_nom[l]
     end)
 
     # 2.5 add integer variables if applicable
@@ -171,7 +171,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 push!(candidates,[i for i=0:max_extension]) # starts from 0 as no extension is also an
             else
                 # fallback option
-                push!(candidates,[i for i=0:10]) # starts from 0 as no extension is also an
+                push!(candidates,[i for i=0:2]) # starts from 0 as no extension is also an
             end
         end
         println(candidates)
@@ -877,9 +877,10 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
+        println("CO2_limit is $(co2_limit[1]) t")
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
-        @constraint(m, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
+        @constraint(m, co2limit, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
                     * select_names(network.carriers, [carrier])[:co2_emissions]
                     for carrier in network.carriers[:name]) .<=  co2_limit)
@@ -890,24 +891,27 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 # 8. set objective function
     println("Adding objective to the model.")
 
+    # TODO: properly with discounted values!
+    undiscounted_years = 50
+
     @objective(m, Min,
-                          sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                        undiscounted_years*sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                         + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
-                        + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+                        #+ dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
                         + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-                        + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
+                        #+ dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
 
                         + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
-                        + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
+                        #+ dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
 
-                        + sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                        + undiscounted_years*sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
                         + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
-                        + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
+                        #+ dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
 
-                        + sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                        + undiscounted_years*sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
                         + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-                        + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+                        #+ dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
                 )
 
     println("Finished building model.")

@@ -1,7 +1,7 @@
 using JuMP
 using MathProgBase
 
-function run_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous", blockmodel::Bool=false, decomposition::String="")
+function run_lopf(network, solver; formulation::String="angles_linear", objective::String="total", investment_type::String="continuous", blockmodel::Bool=false, decomposition::String="")
 
     if blockmodel
         println("Build block JuMP model.")
@@ -48,12 +48,13 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         ST_spill = [m[:ST_spill_fix], m[:ST_spill_ext]]
 
         lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
-        generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
+        #generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
         links = [links[fix_links_b,:]; links[ext_links_b,:]]
         storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
         stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
 
-        println("The cost of transmission network are ", dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom])) + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]))
+        tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom]))#+ dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
+        println("The cost of transmission network extensions are ",  tep_cost)
 
         orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])
@@ -97,7 +98,18 @@ function run_lopf(network, solver; formulation::String="angles", objective::Stri
         end
         align_component_order!(network)
         println("Reduce cost to $(m.objVal)")
+        println("Relation of transmission expansion cost to total system cost: $(tep_cost/m.objVal)")
 
+        generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
+        nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
+        carrier_index(carrier) = findin(generators[:carrier], [carrier])
+
+        co2 =   sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
+            getvalue(G[carrier_index(carrier),t])) for t=1:T)
+            * select_names(network.carriers, [carrier])[:co2_emissions]
+            for carrier in network.carriers[:name])
+
+        println("GHG emissions amount to $(co2[1]) t")
     end
 
     return m

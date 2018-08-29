@@ -148,16 +148,15 @@ function calculate_dependent_values!(network)
     # lines
     network.lines[:v_nom]=select_names(network.buses, network.lines[:bus0])[:v_nom]
     defaults = [(:s_nom_extendable, true), (:s_nom_min, 0),(:s_nom_max, Inf), (:s_nom, 0.),
-                (:s_nom_min, 0), (:s_nom_max, Inf), (:capital_cost, 0), (:g, 0), (:s_nom_step, 16.45),
-                (:x_step, 0.25), (:s_nom_ext_min, 0.1)] # TODO: set reasonable default value for :s_nom_step, :abs_ext_min, :rel_ext_min, x_step=0.2?
+                (:capital_cost, 0), (:g, 0), (:s_nom_ext_min, 0.1), (:s_max_pu, 1.0),] 
     for (col, default) in defaults
         set_default(network.lines, col, default)
     end
+    
     network.lines[:x_pu] = network.lines[:x]./(network.lines[:v_nom].^2)
     network.lines[:r_pu] = network.lines[:r]./(network.lines[:v_nom].^2)
-    network.lines[:b_pu] = network.lines[:b].*network.lines[:v_nom].^2
-    network.lines[:g_pu] = network.lines[:g].*network.lines[:v_nom].^2
-    network.lines[:x_step_pu] = network.lines[:x_step]./(network.lines[:v_nom].^2)
+    #network.lines[:b_pu] = network.lines[:b].*network.lines[:v_nom].^2
+    #network.lines[:g_pu] = network.lines[:g].*network.lines[:v_nom].^2
 
     # links
     defaults = [(:p_nom_extendable, false), (:p_nom_max, Inf), (:p_min_pu, 0),
@@ -194,6 +193,7 @@ function calculate_dependent_values!(network)
             end
         end
     end
+
 end
 
 function to_graph(network)
@@ -335,5 +335,19 @@ function print_active_constraints!(m::JuMP.Model)
     for ac in active_constraints
         println(round(slack[ac],5),"\t\t",m.linconstr[ac])
     end
+
+end
+
+# TODO: ugly workaround, make this right in set_snapshots!
+function set_snapshots_alt!(network, starting::String, ending::String)
+
+    df = network.snapshots
+    network.snapshots = df[(df[:name].<=ending).&(df[:name].>=starting),:]
+
+    df = network.generators_t["p_max_pu"]
+    network.generators_t["p_max_pu"] = df[(df[:name].<=ending).&(df[:name].>=starting),:]
+
+    df = network.loads_t["p_set"]
+    network.loads_t["p_set"] = df[(df[:name].<=ending).&(df[:name].>=starting),:]
 
 end

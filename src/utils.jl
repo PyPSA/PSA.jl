@@ -100,7 +100,6 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
     return dense[cols]
 end
 
-
 """Returns a function which selects time dependent variables either
 from the series network.component_t or from static valuenetwork.component"""
 function select_time_dep(network, component, attribute; components=0)
@@ -339,7 +338,7 @@ function print_active_constraints!(m::JuMP.Model)
 end
 
 # TODO: ugly workaround, make this right in set_snapshots!
-function set_snapshots_alt!(network, starting::String, ending::String)
+function set_snapshots_se!(network, starting::String, ending::String)
 
     df = network.snapshots
     network.snapshots = df[(df[:name].<=ending).&(df[:name].>=starting),:]
@@ -349,5 +348,16 @@ function set_snapshots_alt!(network, starting::String, ending::String)
 
     df = network.loads_t["p_set"]
     network.loads_t["p_set"] = df[(df[:name].<=ending).&(df[:name].>=starting),:]
+
+end
+
+# TODO: simple, more sophisticated method would cluster
+function set_snapshots_sampling!(network, sampling_rate)
+
+    T = nrow(network.snapshots)
+    rows_to_delete = setdiff(collect(1:T),collect(1:sampling_rate:T))
+    network.snapshots = deleterows!(network.snapshots,rows_to_delete)
+    network.generators_t["p_max_pu"] = deleterows!(network.generators_t["p_max_pu"],rows_to_delete)
+    network.loads_t["p_set"] = deleterows!(network.loads_t["p_set"],rows_to_delete)
 
 end

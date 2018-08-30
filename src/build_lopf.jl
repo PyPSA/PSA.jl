@@ -891,27 +891,28 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 # 8. set objective function
     println("Adding objective to the model.")
 
-    # TODO: properly with discounted values!
-    undiscounted_years = 50
+    # TODO: properly with discounted values, and assumes hourly snapshots
+    undiscounted_years_factor = 30 * 8760 / nrow(network.snapshots)
+    println(undiscounted_years_factor)
 
     @objective(m, Min,
-                        undiscounted_years*sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                        undiscounted_years_factor*sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                         + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
-                        #+ dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+                        + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
                         + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-                        #+ dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
+                        + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
 
                         + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
-                        #+ dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
+                        + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
 
-                        + undiscounted_years*sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                        + undiscounted_years_factor*sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
                         + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
-                        #+ dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
+                        + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
 
-                        + undiscounted_years*sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                        + undiscounted_years_factor*sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
                         + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-                        #+ dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+                        + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
                 )
 
     println("Finished building model.")

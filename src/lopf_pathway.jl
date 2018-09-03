@@ -4,7 +4,8 @@ using JuMP
 include("auxilliaries.jl")
 
 
-function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
+function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=nothing,
+    fix_p_nom=nothing)
     # This function is organized as the following:
     # 
     # 0.        Initialize model
@@ -35,14 +36,17 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
     #solver = ClpSolver()
 
 
-    m = Model(solver=solver)
+    m = Model(solver=solver)  # from JuMP
 
     calculate_dependent_values!(n)   # function in auxilliaries
     buses = n.buses.axes[1].val
-    busidx = idx(n.buses)
+    busidx = idx(n.buses)    # Dict{Busname, Index}
     reverse_busidx = rev_idx(n.buses)
     N, = size(n.buses)
     T, = size(n.snapshots) #normally snapshots
+    #t_ip = index of snapshot, when you invest, IP number of investments
+    t_ip, IP = get_investment_periods(n, investment_period)
+    info("Solve network with $IP investment timesteps.")
 
     size(n.loads_t["p"])[1]!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
 
@@ -63,10 +67,10 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
     N_ext = sum(ext_gens_b)
     N_com = sum(com_gens_b)
 
-    p_max_pu = get_switchable_as_dense(n, "generators", "p_max_pu")
+    p_max_pu = get_switchable_as_dense(n, "generators", "p_max_pu") # matrix snapshot x generator["p_max_pu"]
     p_min_pu = get_switchable_as_dense(n, "generators", "p_min_pu")
         
-    p_nom = float.(n.generators[:, "p_nom"])
+    p_nom = float.(n.generators[:, "p_nom"]) # Array{Any,1} formatted to Array{Float64,1}
 
     Ub_fix = p_max_pu[:,fix_gens_b] .* p_nom[fix_gens_b]'
     Lb_fix = p_min_pu[:,fix_gens_b] .* p_nom[fix_gens_b]'
@@ -74,10 +78,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
     Ub_com = p_max_pu[:,com_gens_b] .* p_nom[com_gens_b]'
     Lb_com = p_min_pu[:,com_gens_b] .* p_nom[com_gens_b]'
 
-    Ub_ext_nom = n.generators[ext_gens_b, "p_nom_max"]
+    Ub_ext_nom = n.generators[ext_gens_b, "p_nom_max"] # Array(number generators x 1)  p_nom_max
     Lb_ext_nom = n.generators[ext_gens_b, "p_nom_min"]
-
-
 
     # 1.3 add generator variables to the model
     @variables m begin
@@ -88,40 +90,61 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
         
                         G_status[t=1:T, gr=1:N_com]
 
+        0            <= G_p_nom_ext[ip=1:IP, gr=1:N_ext] <= Ub_ext_nom[gr]
+
+        0            <= G_p_nom_red[ip=1:IP, gr=1:N_ext] <= Ub_ext_nom[gr]
+
         Lb_com[t,gr] <= G_com[t=1:T,gr=1:N_com] <= Ub_com[t,gr]
 
         # Lb_ext_nom[gr] <=  G_p_nom[gr=1:N_ext] <= Ub_ext_nom[gr]
-
-        0            <= G_p_nom_ext[t=1:T, gr=1:N_ext] <= Ub_ext_nom[gr]   # for extending capacity
-                      
-        0            <= G_p_nom_red[t=1:T, gr=1:N_ext] <= Ub_ext_nom[gr]    # for reducing capacity
     end
 
     # 1.4 add time-varying upper bound for p_nom
     @expression(m, G_p_nom[t=1:T, gr=1:N_ext], 0)
     
+    # investment_period
     G_p_nom[1,:] = p_nom[ext_gens_b]
+    if investment_period == nothing
+        G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:]
+    else
+        @constraints(m, begin
+            [t=1, gr=1:N_ext], G_p_nom_ext[t,gr] == 0
+            [t=1, gr=1:N_ext], G_p_nom_red[t,gr] == 0
+        end)
+    end
+    @show t_ip
     for t=2:T
-
-        G_p_nom[t,:] = G_p_nom[t-1,:] + G_p_nom_ext[t,:] - G_p_nom_red[t,:]
-
-    end
-
-    # add fixed p_nom at a certain snapshot
-    if length(n.generators_t["p_nom_opt"])!=0
-        p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
-        values = n.generators_t["p_nom_opt"][p_nom_set]
-        index = findn(p_nom_set)
-        @show index, values
-        for (t,gr, v) in zip(index...,values)
-            @constraint(m,G_p_nom[t, gr] == v)
+        @show t
+        if t ∈ t_ip          
+            ip = findin(t_ip,t)[1]
+            @show ip
+            G_p_nom[t,:] = G_p_nom[t-1,:] + G_p_nom_ext[ip,:] - G_p_nom_red[ip,:]
+        else         
+            G_p_nom[t,:] = G_p_nom[t-1,:]
         end
-
     end
+
+    @constraints(m, begin
+        [t=1:T, gr=1:N_ext], G_p_nom[t, gr]  >= Lb_ext_nom[gr]
+        [t=1:T, gr=1:N_ext], G_p_nom[t, gr]  <= Ub_ext_nom[gr]
+    end)
+
+
+    # # add fixed p_nom at a certain snapshot
+    # if length(n.generators_t["p_nom_opt"])!=0
+    #     p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
+    #     values = n.generators_t["p_nom_opt"][p_nom_set]
+    #     index = findn(p_nom_set)
+    #     @show index, values
+    #     for (t,gr, v) in zip(index...,values)
+    #         @constraint(m,G_p_nom[t, gr] == v)
+    #     end
+
+    # end
     # 1.5 set constraints for generators
 
     Ub_ext = p_max_pu[:,ext_gens_b] .* G_p_nom
-    Lb_ext = p_min_pu[:,ext_gens_b] .* G_p_nom   
+    Lb_ext = p_min_pu[:,ext_gens_b] .* G_p_nom  
 
     @constraints(m, begin
         [t=1:T,gr=1:N_ext], G_ext[t,gr] >= Lb_ext[t,gr]
@@ -139,30 +162,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
     com_gens_b = BitArray(generators[:, "commitable"])
     fix_gens_b = (ext_gens_b .| com_gens_b); fix_gens_b = .!fix_gens_b 
 
-# commitable still to work on:
-    # append_idx_col!(generators)
-    # g_up_time_b = generators[(com_gens_b .& generators[:min_up_time].>0), :idx]
-    # g_down_time_b = generators[(com_gens_b .& generators[:min_down_time].>0), :idx]
-
-    # @constraints(m, begin
-        # [gr=N_com,t=1], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_up_time]-1,T))
-        #                     >=
-        #                     # generators_com[gr,:min_up_time].*G_status[gr,t]
-        #                     generators_com[gr,:min_up_time].*generators_com[gr, :initial_status])
-        # [gr=N_com,t=2:T], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_up_time]-1,T))
-        #                     >= generators_com[gr,:min_up_time].*G_status[gr,t]
-        #                     - generators_com[gr,:min_up_time].*G_status[gr,t-1])
-        #
-        # [gr=N_com,t=1], (generators_com[gr,:min_down_time]
-        #                     - sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_down_time]-1,T))
-        #                     >= (- generators_com[gr,:min_down_time].*G_status[gr,t]
-        #                     + generators_com[gr,:min_down_time].*generators_com[gr, :initial_status]))
-        # [gr=N_com,t=2:T], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_down_time]-1,T))
-        #                     >= - generators_com[gr,:min_down_time].*G_status[gr,t]
-        #                     + generators_com[gr,:min_down_time].*G_status[gr,t-1])
-    # end)
-
-    # free memory
     p_max_pu = 0; p_min_pu = 0
 
 # --------------------------------------------------------------------------------------------------------
@@ -249,7 +248,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
 # 4. define storage_units
     # 4.1 set different storage_units types
     storage_units = n.storage_units
-    fix_sus_b = BitArray(.!storage_units[:, "p_nom_extendable"])
+    fix_sus_b = .!BitArray(storage_units[:, "p_nom_extendable"])
     ext_sus_b = BitArray(.!fix_sus_b)
 
     inflow = get_switchable_as_dense(n, "storage_units", "inflow")
@@ -309,7 +308,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
 
 
     is_cyclic_i = find(storage_units[:, "cyclic_state_of_charge"])
-    not_cyclic_i = find(.!storage_units[:,"cyclic_state_of_charge"])
+    not_cyclic_i = find(.!BitArray(storage_units[:,"cyclic_state_of_charge"]))
+  
 
     SU_soc_change = (storage_units[:,"efficiency_store"]' .* SU_store 
                     -1./storage_units[:,"efficiency_dispatch"]' .* SU_dispatch 
@@ -327,7 +327,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
 # 5. define stores
 # 5.1 set different stores types
     stores = n.stores
-    fix_stores_b = BitArray(.!stores[:,"e_nom_extendable"])
+    fix_stores_b = .!BitArray(stores[:,"e_nom_extendable"])
     ext_stores_b = BitArray(.!fix_stores_b)
 
     inflow = get_switchable_as_dense(n, "stores", "inflow")
@@ -509,11 +509,10 @@ function lopf_pathway(n, solver; extra_functionality=nothing, fix_p_nom=nothing)
 
 # 9. add extra_functionality
     if extra_functionality == "constraint_p_nom_opt"
-        @constraint(m, G_p_nom[11,3] == 0)
+        @constraint(m, G_p_nom[3,3] == 400)
     end
-    #extra_functionality(m, G_p_nom) = @constraint(m, G_p_nom[11,2] == 0)
-    # extra_functionality == true ? extra_constraint(m, G_p_nom) : nothing
 
+@show G_p_nom_red, G_p_nom_ext
 # --------------------------------------------------------------------------------------------------------
 
 # 10. set objective function

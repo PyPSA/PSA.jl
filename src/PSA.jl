@@ -155,14 +155,14 @@ function Network(
     network_mutable(
         buses, generators, loads, lines, links, storage_units, stores, transformers, carriers,
         global_constraints,
-        buses_t, generators_t, loads_t, lines_t, links_t, sttrage_units_t, stores_t, transformers_t,
+        buses_t, generators_t, loads_t, lines_t, links_t, storage_units_t, stores_t, transformers_t,
         snapshots, snapshot_weightings, name);
 end
 
 
 
 # auxiliary for import_nc
-function reformat(data::DataArrays.DataArray)
+function reformat(data::Union{DataArrays.DataArray, Array})
     if typeof(data) == DataArrays.DataArray{Int8,1}
         DataArrays.DataArray{Bool}(data)
     elseif typeof(data) == DataArrays.DataArray{Char,2}

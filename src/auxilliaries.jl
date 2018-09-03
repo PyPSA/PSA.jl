@@ -6,7 +6,9 @@ using AxisArrays
 const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
-
+"""
+this function return all dynamic components of the network
+"""
 function dynamic_components(n)
     fields = String.(fieldnames(n))
     components = []; 
@@ -140,12 +142,16 @@ end
 
 
 function get_switchable_as_dense(n, component, attribute, snapshots=0)
+    """
+    this function returns a matrix snapshot x component[attribute], so it collects time-varying and static attributes
+    (e.g. "p_max_pu") of one component(e.g. "generators")
+    """
     snapshots==0 ? snapshots = n.snapshots : nothing
     T, = size(snapshots)
     component_t = Symbol(component * "_t")
     component = Symbol(component)
-    dense = getfield(n, component_t)[attribute]
-    if size(dense)[1] > 0
+    dense = getfield(n, component_t)[attribute] # time-varying data
+    if size(dense)[1] > 0  # if there is a time-varying attribute
         static_value = getfield(n, component)[:,attribute]
         missing_cols = setdiff(static_value.axes[1].val, dense.axes[2].val)
         dense = assign(dense, repmat(float.(static_value[missing_cols].data)', T), missing_cols )
@@ -170,6 +176,24 @@ function make_fallback_getter(df, def=1)
     (t,x)->in(x, names(df)) ? df[t, x] : def
 end
 
+function get_investment_periods(n, investment_period)
+    # for investment_period
+    start = n.snapshots[1]
+    stop = n.snapshots[length(n.snapshots)]
+    periods = Dict("h" => Base.Dates.Hour(1), "d" => Base.Dates.Day(1),
+                   "w" => Base.Dates.Week(1), "m" => Base.Dates.Month(1),
+                   "y" => Base.Dates.Year(1))
+
+    if investment_period in keys(periods)
+        t = start:periods[investment_period]:stop
+    else
+        investment_period == nothing ? nothing : warn("Not valid argument for investment period, falling back to first snapshot")
+        t = n.snapshots[1]:n.snapshots[2]
+    end
+    # array{DateTime,1} with snapshots when you invest + number of invesment times
+    collect(t)
+    findin(n.snapshots, t), length(t) 
+end
 
 
 # -------------------------------------------------------------------------------------------------

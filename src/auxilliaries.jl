@@ -187,8 +187,8 @@ function get_investment_periods(n, investment_period)
     if investment_period in keys(periods)
         t = start:periods[investment_period]:stop
     else
+        t = n.snapshots[1]:n.snapshots[1]
         investment_period == nothing ? nothing : warn("Not valid argument for investment period, falling back to first snapshot")
-        t = n.snapshots[1]:n.snapshots[2]
     end
     # array{DateTime,1} with snapshots when you invest + number of invesment times
     collect(t)

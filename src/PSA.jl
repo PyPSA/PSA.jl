@@ -143,7 +143,7 @@ function Network(
 end
 
 
-function import_network(folder; round_num_parallel::Bool=false, fix_all_except_lines::Bool=false)
+function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except_lines::Bool=false)
     network = Network()
     !ispath("$folder") ? error("Path not existent") : nothing
     components = static_components(network)
@@ -201,21 +201,21 @@ function import_network(folder; round_num_parallel::Bool=false, fix_all_except_l
     end
 
     # TODO: fallback option, as it changes the line type!
-    if round_num_parallel
-        for l=1:nrow(network.lines)
-            network.lines[:num_parallel][l] = max(1,round(network.lines[:num_parallel][l]))
-        end
-    end
+    # if round_num_parallel
+    #     for l=1:nrow(network.lines)
+    #         network.lines[:num_parallel][l] = max(1,round(network.lines[:num_parallel][l]))
+    #     end
+    # end
 
     # TODO: temporary auxiliary funciton
-    if fix_all_except_lines
-        for l=1:nrow(network.generators)
-            network.generators[:p_nom_extendable][l] = false
-        end
-        for l=1:nrow(network.storage_units)
-            network.storage_units[:p_nom_extendable][l] = false
-        end
-    end
+    # if fix_all_except_lines
+    #     for l=1:nrow(network.generators)
+    #         network.generators[:p_nom_extendable][l] = false
+    #     end
+    #     for l=1:nrow(network.storage_units)
+    #         network.storage_units[:p_nom_extendable][l] = false
+    #     end
+    # end
 
     return network
 end
@@ -228,13 +228,17 @@ function export_network(network, folder)
         for df_name=keys(getfield(network,field_t))
             if nrow(getfield(network,field_t)[df_name])>0
                 field = Symbol(String(field_t)[1:end-2])
-                writetable("$folder/$field-$df_name.csv", getfield(network,field_t)[df_name])
+                if(field == Symbol("generators") || field == Symbol("lines")) # TODO: maybe other components also affected
+                    CSV.write("$folder/$field-$df_name.csv", hcat(DataFrame(name = network.snapshots[:name]), getfield(network,field_t)[df_name]))
+                else
+                    CSV.write("$folder/$field-$df_name.csv", getfield(network,field_t)[df_name])
+                end
             end
         end
     end
     components = [field for field=fieldnames(network) if String(field)[end-1:end]!="_t"]
     for field in components
-        writetable("$folder/$field.csv", getfield(network, field))
+        CSV.write("$folder/$field.csv", getfield(network, field))
     end
 end
 

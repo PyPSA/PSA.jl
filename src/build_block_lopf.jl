@@ -1,10 +1,7 @@
 using BlockDecomposition
 
 # TODO:
-# 1. what decision variables go in master, which in sub? what are the problem sizes?
-# --- option A: all investment variables in master
-# --- option B: only line investment in master
-# 2. add decision variable for reactance in master problem (requires exisitng line)
+# 1. add decision variable for reactance in master problem (requires exisitng line)
 # --- LN_x_pu[l] = ( network.lines[:s_nom][l]  * network.lines[:x_pu][l] ) / LN_s_nom[l]
 # --- added to the master problem this is non-linear! - But linear with susceptance!
 # --- what would happen if x was updated everytime a master solution is handed to the master problem?

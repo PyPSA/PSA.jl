@@ -465,39 +465,6 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
         @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
 
-    # # a.2 bilinear angles formulation (steps for x and s_nom separately specified)
-    # elseif formulation == "angles_bilinear_stepsspecs"
-
-    #     # TODO: unify with angles_bilinear
-    #     # cannot be solved by Gurobi, needs Ipopt!
-    #     # needs investment_type defined!
-
-    #     # voltage angles
-    #     @variable(m, THETA[1:N,1:T])
-
-    #     # load data in correct order
-    #     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-    #     @constraint(m, voltages[n=1:N, t=1:T], (
-
-    #               sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-    #             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-    #                   .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-    #             + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-    #             - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-    #             - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-    #             - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-    #             == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-    #             - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
-
-    #     @NLconstraint(m, flows[l=1:L, t=1:T], LN[l, t] ==  (lines[:x_pu][l]^(-1) + lines[:x_step_pu][l]^(-1) * LN_inv[l]) *
-    #                                                        (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
-
-    #     @constraint(m, slack[t=1:T], THETA[1,t] == 0)
-
-    # a.3 bilinear angles formulation (steps derived from original s_nom and x)
     elseif formulation == "angles_bilinear"
 
         # cannot be solved by Gurobi, needs Ipopt!
@@ -601,8 +568,6 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     # # a.5 linear angles formulation (with relaxation following Taylor2015a)
     # elseif formulation == "angles_relaxation_taylor2015a"
-
-    #     # TODO: not working yet
 
     #     inv_max = zeros(L)
     #     for l=1:L
@@ -891,7 +856,13 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 # 8. set objective function
     println("Adding objective to the model.")
 
-    # TODO: properly with discounted values, and assumes hourly snapshots
+    # TODO: properly with discounted values
+    # current version assumes hourly snapshots for setting weights
+    # What is given as input data?
+    # Are the capital cost for lines correct in clustered networks?
+    # A capital recovery factor is the ratio of a constant annuity to the present value of receiving that annuity for a given legth of time.
+    # CRF = \frac{ i(1+i)^n }{ (1+i)^n - 1 }
+    # annuity payment = \frac{ PV }{ (1-(1+i)^(-n)) / i }
     undiscounted_years_factor = 30 * 8760 / nrow(network.snapshots)
     println(undiscounted_years_factor)
 

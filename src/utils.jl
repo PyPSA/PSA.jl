@@ -337,8 +337,8 @@ function print_active_constraints!(m::JuMP.Model)
 
 end
 
-# TODO: ugly workaround, make this right in set_snapshots!
-function set_snapshots_se!(network, starting::String, ending::String)
+# TODO: choosing individual snapshots
+function set_snapshots_start_end!(network, starting::String, ending::String)
 
     df = network.snapshots
     network.snapshots = df[(df[:name].<=ending).&(df[:name].>=starting),:]
@@ -351,7 +351,7 @@ function set_snapshots_se!(network, starting::String, ending::String)
 
 end
 
-# TODO: simple, more sophisticated method would cluster
+# TODO: simple approach, more sophisticated method would cluster
 function set_snapshots_sampling!(network, sampling_rate)
 
     T = nrow(network.snapshots)

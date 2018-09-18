@@ -1,4 +1,4 @@
-function run_iterative_lopf(network, solver, iterations; formulation::String="angles", objective::String="total", investment_type::String="continuous", post_discretization::Bool=false, discretization_threshold::Float64=0.3, blockmodel=false, decomposition="benders")
+function run_iterative_lopf(network, solver, iterations; formulation::String="angles_linear", objective::String="total", investment_type::String="continuous", post_discretization::Bool=false, discretization_threshold::Float64=0.3, blockmodel=false, decomposition="benders")
 
     x_0 = deepcopy(network.lines[:x])
     s_nom_0 = deepcopy(network.lines[:s_nom])
@@ -35,7 +35,7 @@ function run_iterative_lopf(network, solver, iterations; formulation::String="an
                 end
             end
         end
-            
+
         # debug
         println("x_$k (after) = $(network.lines[:x])")
             

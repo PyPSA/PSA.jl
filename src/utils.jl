@@ -361,3 +361,10 @@ function set_snapshots_sampling!(network, sampling_rate)
     network.loads_t["p_set"] = deleterows!(network.loads_t["p_set"],rows_to_delete)
 
 end
+
+# TODO: just for one line type at the moment and same for all lines
+function set_maximum_extendable_circuits!(network; additional_num_parallel=0, extension_factor=1)
+    for i=1:nrow(network.lines)
+        network.lines[:s_nom_max][i] =  extension_factor*network.lines[:s_nom][i] + additional_num_parallel*1698.10261174053
+    end
+end

@@ -25,7 +25,7 @@ function run_lopf(network, solver; formulation::String="angles_linear", objectiv
         L = nrow(network.lines)
         T = nrow(network.snapshots)
         fix_gens_b = (.!generators[:p_nom_extendable])
-        ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
+        ext_gens_b = .!fix_gens_b#convert(BitArray, generators[:p_nom_extendable])
         fix_lines_b = (.!lines[:s_nom_extendable])
         ext_lines_b = .!fix_lines_b
         fix_links_b = .!links[:p_nom_extendable]
@@ -34,7 +34,7 @@ function run_lopf(network, solver; formulation::String="angles_linear", objectiv
         ext_sus_b = .!fix_sus_b
         fix_stores_b = .!stores[:e_nom_extendable]
         ext_stores_b = .!fix_stores_b
-
+        
         G = [m[:G_fix]; m[:G_ext]]
         LN = [m[:LN_fix]; m[:LN_ext]]
         LK = [m[:LK_fix]; m[:LK_ext]]
@@ -48,7 +48,8 @@ function run_lopf(network, solver; formulation::String="angles_linear", objectiv
         ST_spill = [m[:ST_spill_fix], m[:ST_spill_ext]]
 
         lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
-        #generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
+        orig_gen_order = network.generators[:name]
+        generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
         links = [links[fix_links_b,:]; links[ext_links_b,:]]
         storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
         stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
@@ -56,9 +57,10 @@ function run_lopf(network, solver; formulation::String="angles_linear", objectiv
         tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom]))#+ dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
         println("The cost of transmission network extensions are ",  tep_cost)
 
-        orig_gen_order = network.generators[:name]
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])
-        generators[ext_gens_b,:p_nom_opt] = getvalue(m[:G_p_nom])
+        fix_gens_b_reordered = (.!generators[:p_nom_extendable])
+        ext_gens_b_reordered = .!fix_gens_b_reordered
+        generators[ext_gens_b_reordered,:p_nom_opt] = getvalue(m[:G_p_nom])
         network.generators = generators
         network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
         network.generators = select_names(network.generators, orig_gen_order)

@@ -44,6 +44,8 @@ function run_iterative_lopf(network, solver, iterations; formulation::String="an
     # perform post discretization if selected
     if post_discretization
 
+        lines_s_nom_orig = network.lines[:s_nom]
+
         for l=1:nrow(network.lines)
 
             if network.lines[:s_nom_extendable][l]
@@ -65,8 +67,13 @@ function run_iterative_lopf(network, solver, iterations; formulation::String="an
             
         end
 
-        # need to run once with fixed line ratings to get line flows
+        lines_s_nom_opt_orig = network.lines[:s_nom_opt]
         m = run_lopf(network, solver; formulation="angles_linear", objective=objective, investment_type="continuous")
+
+        for l=1:nrow(network.lines)
+            network.lines[:s_nom][l] = lines_s_nom_orig[l]
+            network.lines[:s_nom_opt][l] = lines_s_nom_opt_orig[l]
+        end
 
     end
 

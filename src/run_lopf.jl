@@ -57,6 +57,8 @@ function run_lopf(network, solver; formulation::String="angles_linear", objectiv
         tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom]))#+ dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
         println("The cost of transmission network extensions are ",  tep_cost)
 
+        # TODO: This section needs revision in terms of working with/without extendable elements! cf. generators example
+
         generators[:p_nom_opt] = deepcopy(generators[:p_nom])
         fix_gens_b_reordered = (.!generators[:p_nom_extendable])
         ext_gens_b_reordered = .!fix_gens_b_reordered
@@ -102,7 +104,7 @@ function run_lopf(network, solver; formulation::String="angles_linear", objectiv
         println("Reduce cost to $(m.objVal)")
         println("Relation of transmission expansion cost to total system cost: $(tep_cost/m.objVal)")
 
-        generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
+        generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
 

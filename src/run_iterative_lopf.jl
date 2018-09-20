@@ -67,13 +67,15 @@ function run_iterative_lopf(network, solver, iterations; formulation::String="an
             
         end
 
-        lines_s_nom_opt_orig = network.lines[:s_nom_opt]
+        s_nom_opt_T = deepcopy(network.lines[:s_nom_opt])
         m = run_lopf(network, solver; formulation="angles_linear", objective=objective, investment_type="continuous")
 
         for l=1:nrow(network.lines)
-            network.lines[:s_nom][l] = lines_s_nom_orig[l]
-            network.lines[:s_nom_opt][l] = lines_s_nom_opt_orig[l]
+            network.lines[:s_nom][l] = s_nom_0[l]
+            network.lines[:s_nom_opt][l] = s_nom_opt_T[l]
         end
+
+        println(network.lines[:s_nom_opt]-network.lines[:s_nom])
 
     end
 

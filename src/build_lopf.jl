@@ -3,7 +3,7 @@ using MathProgBase
 
 include("utils.jl")
 
-function build_lopf(network, solver; formulation::String="angles", objective::String="total", investment_type::String="continuous", blockmodel::Bool=false)
+function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles", objective::String="total", investment_type::String="continuous", blockmodel::Bool=false)
     
     # This function is organized as the following:
     #
@@ -43,6 +43,7 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
     L = nrow(network.lines)
     T = nrow(network.snapshots) #normally snapshots
     nrow(network.loads_t["p"])!=T ? network.loads_t["p"]=network.loads_t["p_set"] : nothing
+    resc_factor = 1
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -88,9 +89,12 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     @variable m p_nom_min[gr] <=  G_p_nom[gr=1:N_ext] <= p_nom_max[gr]
 
+    # TODO: smart rescaling factor
+    rescaling ? resc_factor = 1e4 : nothing
+
     @constraints m begin
-        lower_gen_limit[gr=1:N_ext,t=1:T], G_ext[gr,t] >= G_p_nom[gr]*p_min_pu(t,gr)
-        upper_gen_limit[gr=1:N_ext,t=1:T], G_ext[gr,t] <= G_p_nom[gr]*p_max_pu(t,gr)
+        lower_gen_limit[gr=1:N_ext,t=1:T], resc_factor*G_ext[gr,t] >= G_p_nom[gr]*resc_factor*p_min_pu(t,gr)
+        upper_gen_limit[gr=1:N_ext,t=1:T], resc_factor*G_ext[gr,t] <= G_p_nom[gr]*resc_factor*p_max_pu(t,gr)
     end
 
     G = [G_fix; G_ext] # G is the concatenated variable array
@@ -126,9 +130,11 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     # 2.4 add line constraint for extendable lines
     #println("-- 2.4 add line constraint for extendable lines")
+    # TODO: smart rescaling factor
+    rescaling ? resc_factor = 1e2 : nothing
     @constraints(m, begin
-            upper_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] <=  lines[:s_max_pu][l]*LN_s_nom[l]
-            lower_line_limit[l=1:N_ext,t=1:T], LN_ext[l,t] >= -lines[:s_max_pu][l]*LN_s_nom[l]
+            upper_line_limit[l=1:N_ext,t=1:T], resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
+            lower_line_limit[l=1:N_ext,t=1:T], resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
     end)
 
     # 2.5 add integer variables if applicable
@@ -421,7 +427,10 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
                 == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
                 - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-        @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *     
+        
+        # TODO: smart rescaling factor
+        rescaling ? resc_factor = 1e-2 : nothing
+        @constraint(m, flows[l=1:L, t=1:T], resc_factor*LN[l, t] == resc_factor*lines[:x_pu][l]^(-1) *     
                                                         ( THETA[busidx[lines[:bus0][l]], t]
                                                         - THETA[busidx[lines[:bus1][l]], t]
                                                         )
@@ -842,15 +851,18 @@ function build_lopf(network, solver; formulation::String="angles", objective::St
 
     subannual_adjustment_factor = 8760 / nrow(network.snapshots)
 
+    # TODO: set smart scaling factor
+    rescaling ? resc_factor = 1e2 : nothing
+
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
         println("CO2_limit is $(co2_limit[1]) t")
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
-        @constraint(m, co2limit, sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
+        @constraint(m, co2limit, sum(resc_factor*sum(dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
                     * select_names(network.carriers, [carrier])[:co2_emissions]
-                    for carrier in network.carriers[:name]) .<=  co2_limit)
+                    for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
     end
 
 # --------------------------------------------------------------------------------------------------------

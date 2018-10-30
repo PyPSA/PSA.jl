@@ -200,6 +200,18 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
         setfield!(network, field, getfield(initializer, field))
     end
 
+    # TODO: rounds off too small p_max_pu values to 0.0!
+    # EFFECT: benefit is about 5-10% reduction in computation time but does not provide same objective value due to rounding
+    # sparsify!(x, eps) = x[abs.(x) .< eps] = 0.0;
+    # temp = network.generators_t["p_max_pu"]
+    # temp = temp[2:length(temp)]
+    # labels = names(temp)
+    # temp = convert(Matrix, temp)
+    # sparsify!(temp,1e-5)
+    # temp = convert(DataFrame, temp)
+    # names!(temp,labels)
+    # network.generators_t["p_max_pu"][2:length(network.generators_t["p_max_pu"])] = temp
+
     # TODO: fallback option, as it changes the line type!
     # if round_num_parallel
     #     for l=1:nrow(network.lines)

@@ -849,17 +849,19 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     println("Adding global CO2 constraints to the model.")
 
-    subannual_adjustment_factor = 8760 / nrow(network.snapshots)
+    subannual_adjustment_factor = 1# 8760 / nrow(network.snapshots)
 
     # TODO: set smart scaling factor
     rescaling ? resc_factor = 1e2 : nothing
+
+    # TODO: with snapshot weightings and get rid of adjustment factor.
 
     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
         println("CO2_limit is $(co2_limit[1]) t")
         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
         carrier_index(carrier) = findin(generators[:carrier], [carrier])
-        @constraint(m, co2limit, sum(resc_factor*sum(dot(1./generators[carrier_index(carrier) , :efficiency],
+        @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
                     G[carrier_index(carrier),t]) for t=1:T)
                     * select_names(network.carriers, [carrier])[:co2_emissions]
                     for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
@@ -877,10 +879,12 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # A capital recovery factor is the ratio of a constant annuity to the present value of receiving that annuity for a given legth of time.
     # CRF = \frac{ i(1+i)^n }{ (1+i)^n - 1 }
     # annuity payment = \frac{ PV }{ (1-(1+i)^(-n)) / i }
-    operationcost_adjustment_factor = subannual_adjustment_factor#*30 # scale marginal cost to one year to coincide with annuities + operation cost factor
+    operationcost_adjustment_factor = 1#subannual_adjustment_factor#*30 # scale marginal cost to one year to coincide with annuities + operation cost factor
+
+    #TODO: probably get rid of operationscost_adjustment_factor if weightings are used.
 
     @objective(m, Min,
-                        operationcost_adjustment_factor*sum(dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                        operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:T)
                         + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
                         + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
@@ -890,11 +894,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                         + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
                         + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
 
-                        + operationcost_adjustment_factor*sum(dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                        + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
                         + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
                         + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
 
-                        + operationcost_adjustment_factor*sum(dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                        + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
                         + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                         + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
                 )

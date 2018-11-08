@@ -1,5 +1,6 @@
 using LightGraphs
 using LightGraphs.SimpleGraphs
+using Plots
 
 include("compat.jl")
 
@@ -367,4 +368,34 @@ function set_maximum_extendable_circuits!(network; additional_num_parallel=0, ex
     for i=1:nrow(network.lines)
         network.lines[:s_nom_max][i] =  extension_factor*network.lines[:s_nom][i] + additional_num_parallel*1698.10261174053
     end
+end
+
+function constraintmatrix(model::JuMP.Model; nz::Bool=false)
+    constraintmatrix = MathProgBase.getconstrmatrix(internalmodel(model))
+    cm = deepcopy(constraintmatrix)
+    if nz
+        nzcm = findnz(cm)
+        for (i, j) in zip(nzcm[1],nzcm[2])
+            cm[i,j] = 1.0
+        end
+    end
+    return cm
+end
+
+function plot_cm_nonzeroentries(model::JuMP.Model)
+    cm = constraintmatrix(model, nz=true)
+    xs = [string("x",i) for i = 1:size(cm)[1]]
+    ys = [string("y",i) for i = 1:size(cm)[2]]
+    heatmap(xs,ys,cm',aspect_ratio=1, color=:Greys, size=(1300,800), title="Non-zero entries of constraint matrix")
+end
+
+function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6)
+    cm = constraintmatrix(model, nz=false)
+    elements = findnz(cm)[3]
+    min=minimum(abs.(elements))
+    max=maximum(abs.(elements))
+    filter!(x -> x <= cutoff, elements)
+    filter!(x -> x >= -cutoff, elements)
+    histogram(elements,nbins=100, title="Distribution of values in constraint matrix -- absolute value range: [$min, $max]",
+        xlabel="value / coefficient", ylabel="frequency", size=(1400,800), legend=false, color=:grays)
 end

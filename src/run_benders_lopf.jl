@@ -1,5 +1,7 @@
+# TODO: develop in IPYNB
+
 using JuMP
-using CPLEX
+#using CPLEX
 using MathProgBase
 
 include("utils.jl")
@@ -10,20 +12,10 @@ tolerance = 1e-4
 
 # set start solution
 
-# set master problem formulation
-function build_master_lopf(network, solver)
-
-end
-
-# set slave problem formulation
-function build_slave_lopf(network, solver)
-
-end
-
 # run benders decomposition
-function run_lopf(network, solver)
-    model_master = build_master_lopf(network, solver)
-    model_slave = build_slave_lopf(network, solver)
+function run_benders_lopf(network, solver)
+    model_master = build_lopf(network, solver, benders="master")
+    model_slave = build_lopf(network, solver, benders="slave")
 
     while(true) # set termination condition later
 
@@ -31,11 +23,15 @@ function run_lopf(network, solver)
 
         # cases of master problem
         if status_master == :Infeasible
-
+            println("The problem is infeasible.")
+            break
         elseif status_master == :Unbounded
-
+            # TODO:
+            fmCurrent = nothing
+            xCurrent = nothing
         elseif status_master == :Optimal
-
+            fmCurrent = getobjectivevalue(model_master)
+            xCurrent = getvalue(investment_variables)
         else
             error("Weird status of master problem!")
         end

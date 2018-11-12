@@ -5,7 +5,7 @@ include("utils.jl")
 
 function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles",
                     objective::String="total", investment_type::String="continuous",
-                    blockmodel::Bool=false, benders::String=nothing)
+                    blockmodel::Bool=false, benders::String="")
     
     # This function is organized as the following:
     #
@@ -161,7 +161,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # 2.5 add integer variables if applicable
     #println("-- 2.5 add integer variables if applicable")
     
-    if benders =! "slave"
+    if benders != "slave"
         if investment_type == "continuous"
             @variable(m, LN_inv[l=1:N_ext]) 
             #@constraint(m, continuous[l=1:N_ext], LN_s_nom[l] == LN_inv[l] * lines[ext_lines_b,:s_nom_step][l] + lines[ext_lines_b,:s_nom][l]) # if s_nom_step is specified and option "angles_bilinear_stepsspecs"
@@ -913,14 +913,14 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: set smart scaling factor
     rescaling ? resc_factor = 1e2 : nothing
     
-    carrier_index(carrier) = findin(generators[:carrier], [carrier])
+    carrier_index(carrier) = findin(generators[:carrier], carrier)
 
-    # TODO: with snapshot weightings and get rid of adjustment factor.
+    # TODO: get rid of adjustment factor.
     if benders != "master"
-        if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:type])
+        if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:name])
             co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
             println("CO2_limit is $(co2_limit[1]) t")
-            nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
+            nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
             @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
                         G[carrier_index(nonnull_carriers),t]) for t=1:T)
                         * select_names(network.carriers, [carrier])[:co2_emissions]
@@ -929,27 +929,27 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     end
 
     # 7.2 limit on transmission expansion volume
-    # TODO: sum of capacity expansion times length over all lines <= limit in MWkm unit
+    # sum of capacity expansion times length over all lines <= limit in MWkm unit
     if benders != "master"
-        if nrow(network.global_constraints)>0 && in("mwkm", network.global_constraints[:type])
+        if nrow(network.global_constraints)>0 && in("mwkm_limit", network.global_constraints[:name])
             mwkm_limit = network.global_constraints[network.global_constraints[:name].=="mwkm_limit", :constant]
-            println("Line expansion limit is $(mwkm_limit[1]) MWkm")
+            println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
             @constraint(m, mwkmlimit, 
-                sum((LN_s_nom .- lines[:s_nom]).*lines[:length]) <= mwkm_limit
+                dot(LN_s_nom,lines[:length]) <= mwkm_limit[1] * dot(lines[:s_nom],lines[:length])
             )
         end
     end
 
     # 7.3 specified percentage of ren==nothingewable energy generation
-    # TODO: sum of renewable generation =/>= percentage * sum of total generation
+    # sum of renewable generation =/>= percentage * sum of total generation
     if benders != "master"
-        if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:type])
+        if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
             restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
-            println("Target share of renewable energy is $(restarget*100) %")
-            null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:]
+            println("Target share of renewable energy is $(restarget[1]*100) %")
+            null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
             @constraint(m, restarget,
-              sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T)  
-              >= restarget * sum(network.snapshots[:weightings][t]*G[:,t] for t=1:T)
+              sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
+              >= restarget[1] * sum(sum(network.snapshots[:weightings][t]*G[:,t] for t=1:T))
             )
         end
     end

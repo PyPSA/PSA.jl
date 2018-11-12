@@ -105,15 +105,26 @@ function run_lopf(network, solver; rescaling::Bool=false,formulation::String="an
         println("Relation of transmission expansion cost to total system cost: $(tep_cost/m.objVal)")
 
         generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
-        nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :]
-        carrier_index(carrier) = findin(generators[:carrier], [carrier])
+        nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
+        carrier_index(carrier) = findin(generators[:carrier], carrier)
 
-        co2 =   sum(sum(dot(1./generators[carrier_index(carrier) , :efficiency],
-            getvalue(G[carrier_index(carrier),t])) for t=1:T)
+        co2 =   sum(sum(dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
+            getvalue(G[carrier_index(nonnull_carriers),t])) for t=1:T)
             * select_names(network.carriers, [carrier])[:co2_emissions]
             for carrier in network.carriers[:name])
 
         println("GHG emissions amount to $(co2[1]) t")
+        
+        null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
+        res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / 
+        sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
+
+        println("Renewable energy share is $(res*100) %")
+
+        mwkm = dot(LN_s_nom,lines[:length]) / dot(lines[:s_nom],lines[:length])
+
+        println("Tranmission line volume is increase by factor $mwkm")
+        
     end
 
     return m

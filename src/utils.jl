@@ -360,7 +360,7 @@ function set_snapshots_sampling!(network, sampling_rate)
     network.snapshots = deleterows!(network.snapshots,rows_to_delete)
     network.generators_t["p_max_pu"] = deleterows!(network.generators_t["p_max_pu"],rows_to_delete)
     network.loads_t["p_set"] = deleterows!(network.loads_t["p_set"],rows_to_delete)
-
+    network.snapshots[:weightings] *= sampling_rate
 end
 
 # TODO: just for one line type at the moment and same for all lines
@@ -382,15 +382,19 @@ function constraintmatrix(model::JuMP.Model; nz::Bool=false)
     return cm
 end
 
-function plot_cm_nonzeroentries(model::JuMP.Model)
-    cm = constraintmatrix(model, nz=true)
+function plot_cm_nonzeroentries(model::JuMP.Model; cm=nothing)
+    if cm == nothing
+        cm = constraintmatrix(model, nz=true)
+    end
     xs = [string("x",i) for i = 1:size(cm)[1]]
     ys = [string("y",i) for i = 1:size(cm)[2]]
     heatmap(xs,ys,cm',aspect_ratio=1, color=:Greys, size=(1300,800), title="Non-zero entries of constraint matrix")
 end
 
-function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6)
-    cm = constraintmatrix(model, nz=false)
+function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6, cm=nothing)
+    if cm == nothing
+        cm = constraintmatrix(model, nz=false)
+    end
     elements = findnz(cm)[3]
     min=minimum(abs.(elements))
     max=maximum(abs.(elements))

@@ -121,10 +121,23 @@ function run_lopf(network, solver; rescaling::Bool=false,formulation::String="an
 
         println("Renewable energy share is $(res*100) %")
 
-        mwkm = dot(LN_s_nom,lines[:length]) / dot(lines[:s_nom],lines[:length])
+        mwkm = dot(getvalue(m[:LN_s_nom]),lines[:length]) / dot(lines[:s_nom],lines[:length])
 
-        println("Tranmission line volume is increase by factor $mwkm")
-        
+        println("Transmission line volume is increased by factor $mwkm")
+
+        sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)
+        p_nom_opt = generators[:p_nom_opt][findin(generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))]
+        ren_gens_i = findin(network.generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))
+        ren_gens_b = [in(i,ren_gens_i) ? true : false for i=1:size(network.generators)[1]]
+        fix_ren_gens_b = .!network.generators[:p_nom_extendable][ren_gens_b]
+        p_max_pu = network.generators_t["p_max_pu"][:,2:end]
+        p_max_pu = [p_max_pu[:,fix_ren_gens_b] p_max_pu[:,.!fix_ren_gens_b]]
+        p_max_pu = convert(Array,p_max_pu)
+        sum_of_p_max_pu = sum(network.snapshots[:weightings][t]*p_max_pu[t,:] for t=1:T)
+        curtailment = 1 - ( sum(sum_of_dispatch) / dot(p_nom_opt,sum_of_p_max_pu) )
+
+        println("The curtailment amounts to $(curtailment*100) %")
+
     end
 
     return m

@@ -5,8 +5,17 @@ include("utils.jl")
 
 function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles_linear",
                     objective::String="total", investment_type::String="continuous",
-                    blockmodel::Bool=false, benders::String="")
+                    blockmodel::Bool=false, benders::String="", snapshot_number=0)
     
+    # sanity checks
+    snapshot_number>0 && benders!="slave" ? error("Can only specify one single snapshot for slave-subproblem!") : nothing
+    blockmodel && benders!="" ? error("Can either do manual benders decomposition or use BlockDecomposition.jl!") :  nothing
+
+    N = nrow(network.buses)
+    L = nrow(network.lines)
+    T = nrow(network.snapshots) #normally snapshots
+    snapshot_number>0 ? T_range=range(snapshot_number,1) : T_range=1:T
+
     # This function is organized as the following:
     #
     # 0.        Initialize model
@@ -41,9 +50,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     busidx = idx(buses)
     reverse_lineidx = rev_idx(lines)
     lineidx = idx(lines)
-    N = nrow(network.buses)
-    L = nrow(network.lines)
-    T = nrow(network.snapshots) #normally snapshots
     nrow(network.loads_t["p"])!=T ? network.loads_t["p"]=network.loads_t["p_set"] : nothing
     resc_factor = 1
 
@@ -79,7 +85,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     p_nom = network.generators[fix_gens_b,:p_nom]
 
     if benders != "master"
-        @variable m p_nom[gr]*p_min_pu(t,gr) <= G_fix[gr=1:N_fix,t=1:T] <= p_nom[gr]*p_max_pu(t,gr)
+        @variable m p_nom[gr]*p_min_pu(t,gr) <= G_fix[gr=1:N_fix,t=T_range] <= p_nom[gr]*p_max_pu(t,gr)
     end
 
     # 1.3b add extendable generator variables to the model
@@ -92,7 +98,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     println(network.generators[ext_gens_b,:])
 
     if benders != "master"
-        @variable m G_ext[gr=1:N_ext,t = 1:T]
+        @variable m G_ext[gr=1:N_ext,t = T_range]
     end
 
     if benders != "slave"
@@ -105,19 +111,24 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: need to fix G_p_nom here with solution of master problem
     if benders!="master" && benders!="slave"
         @constraints m begin
-            lower_gen_limit[t=1:T,gr=1:N_ext], resc_factor*G_ext[gr,t] >= G_p_nom[gr]*resc_factor*p_min_pu(t,gr)
-            upper_gen_limit[t=1:T,gr=1:N_ext], resc_factor*G_ext[gr,t] <= G_p_nom[gr]*resc_factor*p_max_pu(t,gr)
+            lower_gen_limit[t=T_range,gr=1:N_ext], resc_factor*G_ext[gr,t] >= G_p_nom[gr]*resc_factor*p_min_pu(t,gr)
+            upper_gen_limit[t=T_range,gr=1:N_ext], resc_factor*G_ext[gr,t] <= G_p_nom[gr]*resc_factor*p_max_pu(t,gr)
         end
     elseif benders == "slave"
         @constraints m begin
-            lower_gen_limit[t=1:T,gr=1:N_ext], resc_factor*G_ext[gr,t] >= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_min_pu(t,gr)
-            upper_gen_limit[t=1:T,gr=1:N_ext], resc_factor*G_ext[gr,t] <= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_max_pu(t,gr)
+            lower_gen_limit[t=T_range,gr=1:N_ext], resc_factor*G_ext[gr,t] >= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_min_pu(t,gr)
+            upper_gen_limit[t=T_range,gr=1:N_ext], resc_factor*G_ext[gr,t] <= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_max_pu(t,gr)
         end
     end
 
     if benders != "master"
-        G = [G_fix; G_ext] # G is the concatenated variable array
+        G = hcat(G_fix, G_ext) #[G_fix; G_ext] # G is the concatenated variable array
+        G_1 = vcat(G_fix, G_ext)
+        G_2 = [G_fix; G_ext] # G is the concatenated variable array
     end
+    println(G)
+    println(G_1)
+    println(G_2)
     generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ] # sort generators the same
     # new booleans
     fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
@@ -144,8 +155,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     #println("-- 2.3 add variables")
     if benders != "master"
         @variables m begin
-            -lines[fix_lines_b,:s_nom][l]*lines[fix_lines_b,:s_max_pu][l]  <=  LN_fix[l=1:N_fix,t=1:T] <= lines[fix_lines_b,:s_max_pu][l]*lines[fix_lines_b,:s_nom][l]
-            LN_ext[l=1:N_ext,t=1:T]
+            -lines[fix_lines_b,:s_nom][l]*lines[fix_lines_b,:s_max_pu][l]  <=  LN_fix[l=1:N_fix,t=T_range] <= lines[fix_lines_b,:s_max_pu][l]*lines[fix_lines_b,:s_nom][l]
+            LN_ext[l=1:N_ext,t=T_range]
         end
     end
     
@@ -162,13 +173,13 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: need to fix LN_s_nom from master problem here
     if benders != "master" && benders != "slave"
         @constraints(m, begin
-            upper_line_limit[t=1:T,l=1:N_ext], resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
-            lower_line_limit[t=1:T,l=1:N_ext], resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
+            upper_line_limit[t=T_range,l=1:N_ext], resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
+            lower_line_limit[t=T_range,l=1:N_ext], resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
         end)
     elseif benders == "slave"
         @constraints(m, begin
-            upper_line_limit[t=1:T,l=1:N_ext], resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
-            lower_line_limit[t=1:T,l=1:N_ext], resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
+            upper_line_limit[t=T_range,l=1:N_ext], resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
+            lower_line_limit[t=T_range,l=1:N_ext], resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
         end)
     end
 
@@ -256,9 +267,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     if benders != "master"
         @variables m begin
-           ((links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l]  <=  LK_fix[l=1:N_fix,t=1:T]
+           ((links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l]  <=  LK_fix[l=1:N_fix,t=T_range]
                     <= (links[fix_links_b, :p_nom].*links[fix_links_b, :p_max_pu])[l])
-            LK_ext[l=1:N_ext,t=1:T]
+            LK_ext[l=1:N_ext,t=T_range]
         end
     end
 
@@ -274,13 +285,13 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: fix LK_p_nom from master problem solution
     if benders != "master" && benders != "slave"
         @constraints(m, begin
-            lower_link_limit[t=1:T,l=1:N_ext], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
-            upper_link_limit[t=1:T,l=1:N_ext], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
+            lower_link_limit[t=T_range,l=1:N_ext], LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
+            upper_link_limit[t=T_range,l=1:N_ext], LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
         end)
     elseif benders == "slave"
         @constraints(m, begin
-            lower_link_limit[t=1:T,l=1:N_ext], LK_ext[l,t] >= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_min_pu][l]
-            upper_link_limit[t=1:T,l=1:N_ext], LK_ext[l,t] <= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_max_pu][l]
+            lower_link_limit[t=T_range,l=1:N_ext], LK_ext[l,t] >= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_min_pu][l]
+            upper_link_limit[t=T_range,l=1:N_ext], LK_ext[l,t] <= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_max_pu][l]
         end)
     end
 
@@ -314,24 +325,24 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     #println("-- 4.3 set variables")
     if benders != "master"
         @variables m begin
-           (0 <=  SU_dispatch_fix[s=1:N_fix,t=1:T] <=
+           (0 <=  SU_dispatch_fix[s=1:N_fix,t=T_range] <=
                     (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_max_pu])[s])
     
-            SU_dispatch_ext[s=1:N_ext,t=1:T] >= 0
+            SU_dispatch_ext[s=1:N_ext,t=T_range] >= 0
     
-            (0 <=  SU_store_fix[s=1:N_fix,t=1:T] <=
+            (0 <=  SU_store_fix[s=1:N_fix,t=T_range] <=
                      - (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_min_pu])[s])
     
-            SU_store_ext[s=1:N_ext,t=1:T] >= 0
+            SU_store_ext[s=1:N_ext,t=T_range] >= 0
     
-            0 <= SU_soc_fix[s=1:N_fix,t=1:T] <= (storage_units[fix_sus_b,:max_hours]
+            0 <= SU_soc_fix[s=1:N_fix,t=T_range] <= (storage_units[fix_sus_b,:max_hours]
             .*storage_units[fix_sus_b,:p_nom])[s]
             
-            SU_soc_ext[s=1:N_ext,t=1:T] >= 0
+            SU_soc_ext[s=1:N_ext,t=T_range] >= 0
             
-            0 <=  SU_spill_fix[s=1:N_fix,t=1:T] <= inflow[:,fix_sus_b][t,s]
+            0 <=  SU_spill_fix[s=1:N_fix,t=T_range] <= inflow[:,fix_sus_b][t,s]
             
-            0 <=  SU_spill_ext[s=1:N_ext,t=1:T] <= inflow[:,ext_sus_b][t,s]
+            0 <=  SU_spill_ext[s=1:N_ext,t=T_range] <= inflow[:,ext_sus_b][t,s]
         end
     end
     
@@ -345,15 +356,15 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: fix SU_p_nom with master problem solution
     if benders != "master" && benders != "slave"
         @constraints(m, begin
-                su_dispatch_limit[t=1:T,s=1:N_ext], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
-                su_storage_limit[t=1:T,s=1:N_ext], SU_store_ext[s,t] <= - SU_p_nom[s].*storage_units[ext_sus_b, :p_min_pu][s]
-                su_capacity_limit[t=1:T,s=1:N_ext], SU_soc_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :max_hours][s]
+                su_dispatch_limit[t=T_range,s=1:N_ext], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
+                su_storage_limit[t=T_range,s=1:N_ext], SU_store_ext[s,t] <= - SU_p_nom[s].*storage_units[ext_sus_b, :p_min_pu][s]
+                su_capacity_limit[t=T_range,s=1:N_ext], SU_soc_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :max_hours][s]
         end)
     elseif benders == "slave"
         @constraints(m, begin
-                su_dispatch_limit[t=1:T,s=1:N_ext], SU_dispatch_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_max_pu][s]
-                su_storage_limit[t=1:T,s=1:N_ext], SU_store_ext[s,t] <= - storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_min_pu][s]
-                su_capacity_limit[t=1:T,s=1:N_ext], SU_soc_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :max_hours][s]
+                su_dispatch_limit[t=T_range,s=1:N_ext], SU_dispatch_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_max_pu][s]
+                su_storage_limit[t=T_range,s=1:N_ext], SU_store_ext[s,t] <= - storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_min_pu][s]
+                su_capacity_limit[t=T_range,s=1:N_ext], SU_soc_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :max_hours][s]
         end)
     end 
 
@@ -416,20 +427,20 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     #println("-- 5.3 set variables")
     if benders != "master"
         @variables m begin
-           (0 <=  ST_dispatch_fix[s=1:N_fix,t=1:T] <=
+           (0 <=  ST_dispatch_fix[s=1:N_fix,t=T_range] <=
                     (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_max_pu])[s])
-            ST_dispatch_ext[s=1:N_ext,t=1:T] >= 0
-            (0 <=  ST_store_fix[s=1:N_fix,t=1:T] <=
+            ST_dispatch_ext[s=1:N_ext,t=T_range] >= 0
+            (0 <=  ST_store_fix[s=1:N_fix,t=T_range] <=
                      - (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_min_pu])[s])
-            ST_store_ext[s=1:N_ext,t=1:T] >= 0
+            ST_store_ext[s=1:N_ext,t=T_range] >= 0
     
             
-            0 <= ST_soc_fix[s=1:N_fix,t=1:T] <= (stores[fix_stores_b,:max_hours]
+            0 <= ST_soc_fix[s=1:N_fix,t=T_range] <= (stores[fix_stores_b,:max_hours]
             .*stores[fix_stores_b,:e_nom])[s]
-            ST_soc_ext[s=1:N_ext,t=1:T] >= 0
+            ST_soc_ext[s=1:N_ext,t=T_range] >= 0
             
-            0 <=  ST_spill_fix[l=1:N_fix,t=1:T] <= inflow[:,fix_stores_b][l=1:N_fix,t=1:T]
-            0 <=  ST_spill_ext[l=1:N_fix,t=1:T] <= inflow[:,ext_stores_b][l=1:N_ext,t=1:T]
+            0 <=  ST_spill_fix[l=1:N_fix,t=T_range] <= inflow[:,fix_stores_b][l=1:N_fix,t=T_range]
+            0 <=  ST_spill_ext[l=1:N_fix,t=T_range] <= inflow[:,ext_stores_b][l=1:N_ext,t=T_range]
         end
     end
     
@@ -443,15 +454,15 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: fix ST_e_nom from master problem solution
     if benders != "master" && benders != "slave"
         @constraints(m, begin
-                st_dispatch_limit[t=1:T,s=1:N_ext], ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
-                st_storage_limit[t=1:T,s=1:N_ext], ST_store_ext[s,t] <= - ST_e_nom[s].*stores[ext_stores_b, :e_min_pu][s]
-                st_capacity_limit[t=1:T,s=1:N_ext], ST_soc_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :max_hours][s]
+                st_dispatch_limit[t=T_range,s=1:N_ext], ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
+                st_storage_limit[t=T_range,s=1:N_ext], ST_store_ext[s,t] <= - ST_e_nom[s].*stores[ext_stores_b, :e_min_pu][s]
+                st_capacity_limit[t=T_range,s=1:N_ext], ST_soc_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :max_hours][s]
         end)
     elseif benders == "slave"
         @constraints(m, begin
-                st_dispatch_limit[t=1:T,s=1:N_ext], ST_dispatch_ext[s,t] <= stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_max_pu][s]
-                st_storage_limit[t=1:T,s=1:N_ext], ST_store_ext[s,t] <= - stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_min_pu][s]
-                st_capacity_limit[t=1:T,s=1:N_ext], ST_soc_ext[s,t] <= stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :max_hours][s]
+                st_dispatch_limit[t=T_range,s=1:N_ext], ST_dispatch_ext[s,t] <= stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_max_pu][s]
+                st_storage_limit[t=T_range,s=1:N_ext], ST_store_ext[s,t] <= - stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_min_pu][s]
+                st_capacity_limit[t=T_range,s=1:N_ext], ST_soc_ext[s,t] <= stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :max_hours][s]
         end)
     end
 
@@ -502,45 +513,53 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         if formulation == "angles_linear"
 
             # voltage angles
-            @variable(m, THETA[1:N,1:T])
+            @variable(m, THETA[1:N,T_range])
 
             # load data in correct order
             loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-            @constraint(m, voltages[t=1:T,n=1:N], (
+            println(T_range)
+            println(G_fix[1,2])
+            println(G[[1,2],[1,2]])
+            println(size(G))
+            println(findin(generators[:bus], [reverse_busidx[1]]))
+            println(G[findin(generators[:bus], [reverse_busidx[1]]), 1])
+
+            @constraint(m, voltages[t=T_range,n=1:N], (
 
                     sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    #+ sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                    #    .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                    #+ sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    #- row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                    #- sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                    #- sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
-                    == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+                    .== 1# sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                    #- sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                    ))
 
             
             # TODO: smart rescaling factor
             rescaling ? resc_factor = 1e-2 : nothing
-            @constraint(m, flows[t=1:T,l=1:L], resc_factor*LN[l, t] == resc_factor*lines[:x_pu][l]^(-1) *     
+            @constraint(m, flows[t=T_range,l=1:L], resc_factor*LN[l, t] == resc_factor*lines[:x_pu][l]^(-1) *     
                                                             ( THETA[busidx[lines[:bus0][l]], t]
                                                             - THETA[busidx[lines[:bus1][l]], t]
                                                             )
             )
 
-            @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
+            @constraint(m, slack[t=T_range], THETA[1,t] == 0 )
 
         elseif formulation == "angles_linear_integer_bigm"
 
             # voltage angles
-            @variable(m, THETA[1:N,1:T])
+            @variable(m, THETA[1:N,T_range])
 
             # load data in correct order
             loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-            @constraint(m, voltages[t=1:T,n=1:N], (
+            @constraint(m, voltages[t=T_range,n=1:N], (
 
                     sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
                     + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -556,17 +575,17 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
             #bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
             #bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-            @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=1:T], (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] + (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
+            @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_range], (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] + (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
                                         + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
                                         *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] >= 0)
-            @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=1:T], (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
+            @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_range], (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
                                         + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
                                         *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] <= 0)
-            @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+            @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=T_range], LN[l, t] == lines[:x_pu][l]^(-1) *
                                         ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )   
             
 
-            @constraint(m, slack[t=1:T], THETA[1,t] == 0 )
+            @constraint(m, slack[t=T_range], THETA[1,t] == 0 )
 
         elseif formulation == "angles_bilinear"
 
@@ -575,12 +594,12 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             # requires starting reactance and line capacity!
 
             # voltage angles
-            @variable(m, THETA[1:N,1:T])
+            @variable(m, THETA[1:N,T_range])
 
             # load data in correct order
             loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-            @constraint(m, voltages[t=1:T,n=1:N], (
+            @constraint(m, voltages[t=T_range,n=1:N], (
 
                         sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
                     + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -594,14 +613,14 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
                     - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
-            #--@NLconstraint(m, flows_ext[l=1:L, t=1:T], LN[l, t] ==  (1+LN_inv[l])*lines[:x_pu][l]^(-1) *
+            #--@NLconstraint(m, flows_ext[l=1:L, t=T_range], LN[l, t] ==  (1+LN_inv[l])*lines[:x_pu][l]^(-1) *
             #        (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
-            @NLconstraint(m, flows_ext[t=1:T,l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b))], LN[l, t] ==  (1+LN_inv[l] / lines[:num_parallel][l])*lines[:x_pu][l]^(-1) *
+            @NLconstraint(m, flows_ext[t=T_range,l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b))], LN[l, t] ==  (1+LN_inv[l] / lines[:num_parallel][l])*lines[:x_pu][l]^(-1) *
                                                             (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )
-            @constraint(m, flows_nonext[t=1:T,l=1:(sum(fix_lines_b))], LN[l, t] == lines[:x_pu][l]^(-1) *
+            @constraint(m, flows_nonext[t=T_range,l=1:(sum(fix_lines_b))], LN[l, t] == lines[:x_pu][l]^(-1) *
                                                             ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) )                                                   
 
-            @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+            @constraint(m, slack[t=T_range], THETA[1,t] == 0)
 
         # # a.4 linear angles formulation (with McCormick relaxation)
         # elseif formulation == "angles_relaxation_mccormick"
@@ -609,24 +628,24 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         #     # needs investment_type defined!
 
         #     # variables
-        #     @variable(m, THETA[1:N,1:T])
-        #     @variable(m, AUX_mu[1:L,1:T])
-        #     @variable(m, AUX_xi[1:L,1:T])
+        #     @variable(m, THETA[1:N,T_range])
+        #     @variable(m, AUX_mu[1:L,T_range])
+        #     @variable(m, AUX_xi[1:L,T_range])
 
         #     # load data in correct order
         #     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-        #     @constraint(m, anglediff[l=1:L,t=1:T], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+        #     @constraint(m, anglediff[l=1:L,t=T_range], AUX_xi[l,t] == THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
 
         #     max_angle_diff = pi / 6 
         #     min_angle_diff = -max_angle_diff
 
         #     @constraints(m, begin
-        #         anglediff_upper_limit[l=1:L,t=1:T], AUX_xi[l,t] <= max_angle_diff
-        #         anglediff_lower_limit[l=1:L,t=1:T], AUX_xi[l,t] >= min_angle_diff
+        #         anglediff_upper_limit[l=1:L,t=T_range], AUX_xi[l,t] <= max_angle_diff
+        #         anglediff_lower_limit[l=1:L,t=T_range], AUX_xi[l,t] >= min_angle_diff
         #     end )
 
-        #     @constraint(m, voltages[n=1:N, t=1:T], 
+        #     @constraint(m, voltages[n=1:N, t=T_range], 
             
         #                 sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
         #             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -640,7 +659,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         #             == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
         #                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )
 
-        #     @constraint(m, flows[l=1:L, t=1:T], 
+        #     @constraint(m, flows[l=1:L, t=T_range], 
         #         LN[l, t] == lines[:x_pu][l]^(-1) * AUX_xi[l,t]
         #                     + lines[:x_step_pu][l]^(-1) * AUX_mu[l,t]
         #     ) 
@@ -653,21 +672,21 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         #     end
             
         #     @constraints(m, begin
-        #         mccormick1[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
+        #         mccormick1[l=1:L, t=T_range], (AUX_mu[l,t] >= inv_min[l] * AUX_xi[l,t]
         #                         + LN_inv[l] * min_angle_diff
         #                         - inv_min[l] * min_angle_diff)
-        #         mccormick2[l=1:L, t=1:T], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
+        #         mccormick2[l=1:L, t=T_range], (AUX_mu[l,t] >= inv_max[l] * AUX_xi[l,t]
         #                         + LN_inv[l] * max_angle_diff
         #                         - inv_max[l] * max_angle_diff)
-        #         mccormick3[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
+        #         mccormick3[l=1:L, t=T_range], (AUX_mu[l,t] <= inv_max[l] * AUX_xi[l,t]
         #                         + LN_inv[l] * min_angle_diff
         #                         - inv_max[l] * min_angle_diff)
-        #         mccormick4[l=1:L, t=1:T], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
+        #         mccormick4[l=1:L, t=T_range], (AUX_mu[l,t] <= inv_min[l] * AUX_xi[l,t]
         #                         + LN_inv[l] * max_angle_diff
         #                         - inv_min[l] * max_angle_diff)
         #     end)
 
-        #     @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+        #     @constraint(m, slack[t=T_range], THETA[1,t] == 0)
 
         # # a.5 linear angles formulation (with relaxation following Taylor2015a)
         # elseif formulation == "angles_relaxation_taylor2015a"
@@ -678,14 +697,14 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         #     end
 
         #     # variables
-        #     @variable(m, THETA[1:N,1:T])
-        #     @variable(m, AUX_XI[1:L,1:T])
+        #     @variable(m, THETA[1:N,T_range])
+        #     @variable(m, AUX_XI[1:L,T_range])
 
         #     # load data in correct order
         #     loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
         #     # (2)
-        #     @constraint(m, voltages[n=1:N, t=1:T], (
+        #     @constraint(m, voltages[n=1:N, t=T_range], (
 
         #                 sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
         #             + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -700,14 +719,14 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         #                - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
 
         #     # (2)
-        #     @constraint(m, flows[l=1:L, t=1:T], LN[l, t] == lines[:x_pu][l]^(-1) *
+        #     @constraint(m, flows[l=1:L, t=T_range], LN[l, t] == lines[:x_pu][l]^(-1) *
         #                                                     ( THETA[busidx[lines[:bus0][l]], t]
         #                                                     - THETA[busidx[lines[:bus1][l]], t]
         #                                                     )
 
         #                                                   + AUX_XI[l,t] )
 
-        #     @constraint(m, slack[t=1:T], THETA[1,t] == 0)
+        #     @constraint(m, slack[t=T_range], THETA[1,t] == 0)
 
         #     # (1)
         #     L_existing = Int64[]
@@ -718,12 +737,12 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         #     end
 
         #     @constraints(m, begin
-        #         temp1[l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
+        #         temp1[l in L_existing, t=T_range], lines[:x_pu][l]^(-1) *
         #                         ( THETA[busidx[lines[:bus0][l]], t]
         #                         - THETA[busidx[lines[:bus1][l]], t]
         #                         ) <= lines[:s_nom][l]
 
-        #         temp2[l in L_existing, t=1:T], lines[:x_pu][l]^(-1) *
+        #         temp2[l in L_existing, t=T_range], lines[:x_pu][l]^(-1) *
         #                         ( THETA[busidx[lines[:bus1][l]], t]
         #                         - THETA[busidx[lines[:bus0][l]], t]
         #                         ) >= lines[:s_nom][l]
@@ -763,7 +782,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             #load data in correct order
             loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-            @constraint(m, balance[t=1:T,n=1:N], (
+            @constraint(m, balance[t=T_range,n=1:N], (
                 sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
                 + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
                 + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -814,11 +833,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     end
                 end
                 if attribute==:x
-                    @constraint(m, line_cycle_constraint[t=1:T,c=1:length(cycles_branch)] ,
+                    @constraint(m, line_cycle_constraint[t=T_range,c=1:length(cycles_branch)] ,
                             dot(directions[c] .* lines[cycles_branch[c], :x_pu],
                                 LN[cycles_branch[c],t]) == 0)
                 # elseif attribute==:r
-                #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
+                #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=T_range] ,
                 #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
                 end
             end
@@ -833,7 +852,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             #load data in correct order
             loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-            @constraint(m, balance[t=1:T,n=1:N], (
+            @constraint(m, balance[t=T_range,n=1:N], (
                 sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
                 + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
                 + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -884,7 +903,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     end
                 end
                 if attribute==:x
-                    @NLconstraint(m, line_cycle_constraint[t=1:T,c=1:length(cycles_branch)] ,
+                    @NLconstraint(m, line_cycle_constraint[t=T_range,c=1:length(cycles_branch)] ,
                             sum(      directions[c][l] 
                                     * lines[cycles_branch[c], :x_pu][l] 
                                     * (1+LN_inv[cycles_branch[c]][l] / lines[cycles_branch[c], :num_parallel][l])^(-1)
@@ -894,7 +913,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                             )               
                                 == 0)
                 # elseif attribute==:r
-                #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
+                #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=T_range] ,
                 #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
                 end
             end
@@ -907,7 +926,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             #load data in correct order
             loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-            @constraint(m, flows[t=1:T,l=1:L],
+            @constraint(m, flows[t=T_range,l=1:L],
                 sum( ptdf[l,n]
                 * (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
                     + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
@@ -921,7 +940,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 for n in 1:N
                 ) == LN[l,t] )
 
-            @constraint(m, balance[t=1:T],
+            @constraint(m, balance[t=T_range],
             sum( (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
                 + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
                     .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
@@ -955,17 +974,17 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     carrier_index(carrier) = findin(generators[:carrier], carrier)
 
     # # TODO: get rid of adjustment factor.
-    # if benders != "master"
-    #     if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:name])
-    #         co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
-    #         println("CO2_limit is $(co2_limit[1]) t")
-    #         nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
-    #         @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
-    #                     G[carrier_index(nonnull_carriers),t]) for t=1:T)
-    #                     * select_names(network.carriers, [carrier])[:co2_emissions]
-    #                     for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
-    #     end
-    # end
+    if benders != "master" && length(T_range)>1
+        if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:name])
+            co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
+            println("CO2_limit is $(co2_limit[1]) t")
+            nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
+            @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
+                        G[carrier_index(nonnull_carriers),t]) for t=1:T)
+                        * select_names(network.carriers, [carrier])[:co2_emissions]
+                        for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
+        end
+    end
 
     # 7.2 limit on transmission expansion volume
     # sum of capacity expansion times length over all lines <= limit in MWkm unit
@@ -981,7 +1000,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     # 7.3 specified percentage of renewable energy generation
     # sum of renewable generation =/>= percentage * sum of total generation
-    if benders != "master"
+    if benders != "master" && length(T_range)>1
         if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
             restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
             println("Target share of renewable energy is $(restarget[1]*100) %")
@@ -1055,7 +1074,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     if benders!="master" && benders!="slave"
 
         @objective(m, Min,
-                operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:T)
+                operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=T_range)
                 + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
                 + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
@@ -1065,11 +1084,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
                 + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
 
-                + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
+                + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=T_range)
                 + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
                 + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
 
-                + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=T_range)
                 + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                 + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
         )
@@ -1103,9 +1122,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         # TODO: slave objective function
         @objective(m, Min,
             operationcost_adjustment_factor*(
-                    sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:T)
-                + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:T)
-                + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T)
+                    sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=T_range)
+                + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=T_range)
+                + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=T_range)
             )
         )
 

@@ -15,11 +15,14 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     L = nrow(network.lines)
     T = nrow(network.snapshots) #normally snapshots
     sn = snapshot_number
-    if snapshot_number>0
+    if sn>0
         Te = 1 
+        Trange = sn:sn
     else
         Te = T
+        Trange = 1:T
     end
+    nt=length(Trange)
 
     # This function is organized as the following:
     #
@@ -80,6 +83,10 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     N_fix_ST = sum(.!stores[:e_nom_extendable])
     N_ext_ST = sum(.!(.!stores[:e_nom_extendable]))
     N_ST = N_fix_ST + N_ext_ST
+    
+    if N_com_G > 0
+        println("WARNING, no unit commitment yet")
+    end
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -107,999 +114,992 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     if benders != "master"
         @variable(m, G_fix[gr=1:N_fix_G,t=1:Te])
         @variable(m, G_ext[gr=1:N_ext_G,t=1:Te])
+        G = [G_fix; G_ext] # G is the concatenated variable array
         @variable(m, LN_fix[l=1:N_fix_LN,t=1:Te])
         @variable(m, LN_ext[l=1:N_ext_LN,t=1:Te])
+        LN = [LN_fix; LN_ext]
         @variable(m, LK_fix[l=1:N_fix_LK,t=1:Te])
         @variable(m, LK_ext[l=1:N_ext_LK,t=1:Te])
+        LK = [LK_fix; LK_ext]
         @variable(m, SU_dispatch_fix[s=1:N_fix_SU,t=1:Te])
         @variable(m, SU_dispatch_ext[s=1:N_ext_SU,t=1:Te])
+        SU_dispatch = [SU_dispatch_fix; SU_dispatch_ext]
         @variable(m, SU_store_fix[s=1:N_fix_SU,t=1:Te])
         @variable(m, SU_store_ext[s=1:N_ext_SU,t=1:Te])
+        SU_store = [SU_store_fix; SU_store_ext]
         @variable(m, SU_soc_fix[s=1:N_fix_SU,t=1:Te])
         @variable(m, SU_soc_ext[s=1:N_ext_SU,t=1:Te])
+        SU_soc = [SU_soc_fix; SU_soc_ext]
         @variable(m, SU_spill_fix[s=1:N_fix_SU,t=1:Te])
         @variable(m, SU_spill_ext[s=1:N_ext_SU,t=1:Te])
+        SU_spill = [SU_spill_fix; SU_spill_ext]
         @variable(m, ST_dispatch_fix[s=1:N_fix_ST,t=1:Te])
         @variable(m, ST_dispatch_ext[s=1:N_ext_ST,t=1:Te])
+        ST_dispatch = [ST_dispatch_fix; ST_dispatch_ext]
         @variable(m, ST_store_fix[s=1:N_fix_ST,t=1:Te])
         @variable(m, ST_store_ext[s=1:N_ext_ST,t=1:Te])
+        ST_store = [ST_store_fix; ST_store_ext]
         @variable(m, ST_soc_fix[s=1:N_fix_ST,t=1:Te])
         @variable(m, ST_soc_ext[s=1:N_ext_ST,t=1:Te])
+        ST_soc = [ST_soc_fix; ST_soc_ext]
         @variable(m, ST_spill_fix[l=1:N_fix_ST,t=1:Te])
         @variable(m, ST_spill_ext[l=1:N_ext_ST,t=1:Te])
+        ST_spill = [ST_spill_fix, ST_spill_ext]
         contains(formulation, "angles") ? @variable(m, THETA[1:N,1:Te]) : nothing
     end
 
+    count = 1
+    for tcurr=Trange
+        println("tcurr=$tcurr")
+    # 1. add all generators to the model
+        println("Adding generators to the model.")
 
-# 1. add all generators to the model
-    println("Adding generators to the model.")
+        # 1.1 set different generator types
+        #println("-- 1.1 set different generator types")
+        generators = network.generators
+        fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
+        ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
+        com_gens_b = convert(BitArray, generators[:commitable])
 
-    # 1.1 set different generator types
-    #println("-- 1.1 set different generator types")
-    generators = network.generators
-    fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
-    ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
-    com_gens_b = convert(BitArray, generators[:commitable])
 
-    if N_com_G > 0
-        println("WARNING, no unit commitment yet")
-    end
+        p_max_pu = get_switchable_as_dense(network, "generators", "p_max_pu")
+        p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
 
-    p_max_pu = get_switchable_as_dense(network, "generators", "p_max_pu")
-    p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
+        # 1.3a add non-extendable generator variables to the model
+        #println("-- 1.3a add non-extendable generator variables to the model")
+        p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=fix_gens_b)
+        p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)
+        p_nom = network.generators[fix_gens_b,:p_nom]
 
-    # 1.3a add non-extendable generator variables to the model
-    #println("-- 1.3a add non-extendable generator variables to the model")
-    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=fix_gens_b)
-    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)
-    p_nom = network.generators[fix_gens_b,:p_nom]
-
-    if benders != "master"
-        @constraint(m, bounds_G_fix[gr=1:N_fix_G, t=1:Te],
-            p_nom[gr]*p_min_pu(t,gr) <= G_fix[gr,t] <= p_nom[gr]*p_max_pu(t,gr))
-    end
-
-    # 1.3b add extendable generator variables to the model
-    #println("-- 1.3b add extendable generator variables to the model")
-    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
-    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
-    p_nom_min = network.generators[ext_gens_b,:p_nom_min]
-    p_nom_max = network.generators[ext_gens_b,:p_nom_max]
-
-    if benders != "slave"
-        @constraint(m, bounds_G_p_nom[gr=1:N_ext_G], p_nom_min[gr] <=  G_p_nom[gr] <= p_nom_max[gr])
-    end
-
-    # TODO: smart rescaling factor
-    rescaling ? resc_factor = 1e4 : nothing
-
-    # TODO: need to fix G_p_nom here with solution of master problem
-    if benders!="master" && benders!="slave"
-
-        @constraints m begin
-
-            lower_gen_limit[t=1:Te,gr=1:N_ext_G],
-                resc_factor*G_ext[gr,t] >= G_p_nom[gr]*resc_factor*p_min_pu(t,gr)
-
-            upper_gen_limit[t=1:Te,gr=1:N_ext_G],
-                resc_factor*G_ext[gr,t] <= G_p_nom[gr]*resc_factor*p_max_pu(t,gr)
+        if benders != "master"
+            @constraint(m, bounds_G_fix[gr=1:N_fix_G, t=tcurr],
+                p_nom[gr]*p_min_pu(t,gr) <= G_fix[gr,count] <= p_nom[gr]*p_max_pu(t,gr))
         end
 
-    elseif benders == "slave"
+        # 1.3b add extendable generator variables to the model
+        #println("-- 1.3b add extendable generator variables to the model")
+        p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
+        p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
+        p_nom_min = network.generators[ext_gens_b,:p_nom_min]
+        p_nom_max = network.generators[ext_gens_b,:p_nom_max]
 
-        @constraints m begin
-            lower_gen_limit[t=1:Te,gr=1:N_ext_G],
-                resc_factor*G_ext[gr,t] >= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_min_pu(t,gr)
-            upper_gen_limit[t=1:Te,gr=1:N_ext_G],
-                resc_factor*G_ext[gr,t] <= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_max_pu(t,gr)
+        if benders != "slave" && count==nt
+            @constraint(m, bounds_G_p_nom[gr=1:N_ext_G], p_nom_min[gr] <=  G_p_nom[gr] <= p_nom_max[gr])
         end
-    end
 
-    if benders != "master"
-        G = [G_fix; G_ext] # G is the concatenated variable array
-    end
-    generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ] # sort generators the same
-    fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
-    ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
-    com_gens_b = convert(BitArray, generators[:commitable])
+        # TODO: smart rescaling factor
+        rescaling ? resc_factor = 1e4 : nothing
 
-# --------------------------------------------------------------------------------------------------------
+        # TODO: need to fix G_p_nom here with solution of master problem
+        if benders!="master" && benders!="slave"
 
-# 2. add all lines to the model
-    println("Adding lines to the model.")
+            @constraints m begin
 
-    # 2.1 set different lines types
-    #println("-- 2.1 set different lines types")
-    lines = network.lines
-    fix_lines_b = (.!lines[:s_nom_extendable])
-    ext_lines_b = .!fix_lines_b
+                lower_gen_limit[t=tcurr,gr=1:N_ext_G],
+                    resc_factor*G_ext[gr,t] >= G_p_nom[gr]*resc_factor*p_min_pu(t,gr)
 
-    # 2.3 add variables
-    #println("-- 2.3 add variables")
-    if benders != "master"
-        @constraint(m, bounds_LN_fix[l=1:N_fix_LN,t=1:Te],
-            -lines[fix_lines_b,:s_nom][l]*lines[fix_lines_b,:s_max_pu][l] 
-            <=  LN_fix[l,t] <= 
-            lines[fix_lines_b,:s_max_pu][l]*lines[fix_lines_b,:s_nom][l]
-        )
-    end
-    
-    if benders != "slave"
-        @constraint(m, bounds_LN_s_nom[l=1:N_ext_LN],
-            lines[ext_lines_b,:s_nom_min][l] <=  LN_s_nom[l] <= lines[ext_lines_b,:s_nom_max][l]
-        )
-    end
-    
-    # 2.4 add line constraint for extendable lines
-    #println("-- 2.4 add line constraint for extendable lines")
+                upper_gen_limit[t=tcurr,gr=1:N_ext_G],
+                    resc_factor*G_ext[gr,t] <= G_p_nom[gr]*resc_factor*p_max_pu(t,gr)
+            end
 
-    # TODO: smart rescaling factor
-    rescaling ? resc_factor = 1e2 : nothing
-    # TODO: need to fix LN_s_nom from master problem here
+        elseif benders == "slave"
 
-    if benders != "master" && benders != "slave"
+            @constraints m begin
+                lower_gen_limit[t=tcurr,gr=1:N_ext_G],
+                    resc_factor*G_ext[gr,count] >= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_min_pu(t,gr)
+                upper_gen_limit[t=tcurr,gr=1:N_ext_G],
+                    resc_factor*G_ext[gr,count] <= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_max_pu(t,gr)
+            end
+        end
 
-        @constraints(m, begin
+        generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ] # sort generators the same
+        fix_gens_b = ((.!generators[:p_nom_extendable]) .& (.!generators[:commitable]))
+        ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
+        com_gens_b = convert(BitArray, generators[:commitable])
 
-            upper_line_limit[t=1:Te,l=1:N_ext_LN], 
-                resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
-            lower_line_limit[t=1:Te,l=1:N_ext_LN], 
-                resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
+    # --------------------------------------------------------------------------------------------------------
 
-        end)
+    # 2. add all lines to the model
+        println("Adding lines to the model.")
 
-    elseif benders == "slave"
+        # 2.1 set different lines types
+        #println("-- 2.1 set different lines types")
+        lines = network.lines
+        fix_lines_b = (.!lines[:s_nom_extendable])
+        ext_lines_b = .!fix_lines_b
 
-        @constraints(m, begin
-
-            upper_line_limit[t=1:Te,l=1:N_ext_LN], 
-                resc_factor*LN_ext[l,t] <=  
-                resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
-
-            lower_line_limit[t=1:Te,l=1:N_ext_LN],
-                resc_factor*LN_ext[l,t] >=
-                -resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
-
-        end)
-    end
-
-    # 2.5 add integer variables if applicable
-    #println("-- 2.5 add integer variables if applicable")
-    
-    if benders != "slave"
-        if investment_type == "continuous"
-
-            @constraint(m, continuous[l=1:N_ext_LN],
-                LN_s_nom[l] ==
-                (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
+        # 2.3 add variables
+        #println("-- 2.3 add variables")
+        if benders != "master"
+            @constraint(m, bounds_LN_fix[l=1:N_fix_LN,t=tcurr],
+                -lines[fix_lines_b,:s_nom][l]*lines[fix_lines_b,:s_max_pu][l] 
+                <=  LN_fix[l,t] <= 
+                lines[fix_lines_b,:s_max_pu][l]*lines[fix_lines_b,:s_nom][l]
             )
-            
-        elseif investment_type == "integer"
-
-            @constraint(m, continuous[l=1:N_ext_LN],
-                LN_s_nom[l] ==
-                (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
+        end
+        
+        if benders != "slave" && count==nt
+            @constraint(m, bounds_LN_s_nom[l=1:N_ext_LN],
+                lines[ext_lines_b,:s_nom_min][l] <=  LN_s_nom[l] <= lines[ext_lines_b,:s_nom_max][l]
             )
-            
-        elseif investment_type == "binary"
+        end
+        
+        # 2.4 add line constraint for extendable lines
+        #println("-- 2.4 add line constraint for extendable lines")
 
-            bigM_default = 1e4
-            bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
+        # TODO: smart rescaling factor
+        rescaling ? resc_factor = 1e2 : nothing
+        # TODO: need to fix LN_s_nom from master problem here
+
+        if benders != "master" && benders != "slave"
 
             @constraints(m, begin
 
-                binary1[l=1:N_ext_LN],
-                    - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv[l]
-
-                binary2[l=1:N_ext_LN],
-                    0 <= LN_inv[l] # no reduction of capacity allowed
-
-                binary3[l=1:N_ext_LN],
-                    bigM[l] * LN_opt[l] >= LN_inv[l]
-
-                binary4[l=1:N_ext_LN],
-                    LN_s_nom[l] == 
-                    (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
+                upper_line_limit[t=tcurr,l=1:N_ext_LN], 
+                    resc_factor*LN_ext[l,t] <=  resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
+                lower_line_limit[t=tcurr,l=1:N_ext_LN], 
+                    resc_factor*LN_ext[l,t] >= -resc_factor*lines[:s_max_pu][l]*LN_s_nom[l]
 
             end)
 
-        elseif investment_type == "integer_bigm"
-            
-            @constraint(m, logical[l=1:N_ext_LN], sum(LN_opt[l,c] for c in candidates[l]) == 1.0)
+        elseif benders == "slave"
 
-            @constraint(m, integer_binary_reformulation[l=1:N_ext_LN],
-                LN_s_nom[l] ==
-                (1+sum(c*LN_opt[l,c] for c in candidates[l]) / lines[ext_lines_b,:num_parallel][l])
-                * lines[ext_lines_b,:s_nom][l]
-            )
-            
+            @constraints(m, begin
+
+                upper_line_limit[t=tcurr,l=1:N_ext_LN], 
+                    resc_factor*LN_ext[l,count] <=  
+                    resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
+
+                lower_line_limit[t=tcurr,l=1:N_ext_LN],
+                    resc_factor*LN_ext[l,count] >=
+                    -resc_factor*lines[:s_max_pu][l]*lines[ext_lines_b,:s_nom][l]
+
+            end)
         end
-    end
 
-    if benders != "master"
-        LN = [LN_fix; LN_ext]
-    end
-    lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
-    fix_lines_b = (.!lines[:s_nom_extendable])
-    ext_lines_b = .!fix_lines_b
-
-# --------------------------------------------------------------------------------------------------------
-
-# 3. add all links to the model
-    println("Adding links to the model.")
-
-    # 3.1 set different link types
-    #println("-- 3.1 set different link types")
-    links = network.links
-    fix_links_b = .!links[:p_nom_extendable]
-    ext_links_b = .!fix_links_b
-
-    #  3.3 set link variables
-    #println("-- 3.3 set link variables")
-
-    if benders != "master"
-        @constraint(m, bounds_LK_fix[l=1:N_fix_LK,t=1:Te],
-           ((links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l] 
-           <=  LK_fix[l,t] <= 
-           (links[fix_links_b, :p_nom].*links[fix_links_b, :p_max_pu])[l])
-        )
-    end
-
-    if benders != "slave"
-        @constraint(m, bounds_LK_p_nom[l=1:N_ext_LK],
-            links[ext_links_b, :p_nom_min][l]
-            <=  LK_p_nom[l] <=
-            links[ext_links_b, :p_nom_max][l]
-        )
-    end
-
-    # 3.4 set constraints for extendable links
-    #println("-- 3.4 set constraints for extendable links")
-
-    # TODO: fix LK_p_nom from master problem solution
-    if benders != "master" && benders != "slave"
-        @constraints(m, begin
-            lower_link_limit[t=1:Te,l=1:N_ext_LK],
-                LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
-            upper_link_limit[t=1:Te,l=1:N_ext_LK],
-                LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
-        end)
-    elseif benders == "slave"
-        @constraint(m, lower_link_limit[t=1:Te,l=1:N_ext_LK],
-                LK_ext[l,t] >= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_min_pu][l]
-        )
-
-        @constraint(m, upper_link_limit[t=1:Te,l=1:N_ext_LK],
-                LK_ext[l,t] <= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_max_pu][l]
-        )
-    end
-
-    if benders != "master"
-        LK = [LK_fix; LK_ext]
-    end
-    links = [links[fix_links_b,:]; links[ext_links_b,:]]
-    fix_links_b = .!links[:p_nom_extendable]
-    ext_links_b = .!fix_links_b
-
-# --------------------------------------------------------------------------------------------------------
-
-# TODO: not made for benders and individual snapshots yet!
-# 4. define storage_units
-    println("Adding storage units to the model.")
-
-    # 4.1 set different storage_units types
-    #println("-- 4.1 set different storage_units types")
-    storage_units = network.storage_units
-    fix_sus_b = .!storage_units[:p_nom_extendable]
-    ext_sus_b = .!fix_sus_b
-
-    inflow = get_switchable_as_dense(network, "storage_units", "inflow")
-
-    #  4.3 set variables
-    #println("-- 4.3 set variables")
-    if benders != "master"
-        @constraints(m, begin
-            bounds_SU_dispatch_fix[s=1:N_fix_SU,t=1:Te], 
-                (0 <=  SU_dispatch_fix[s,t] <=
-                (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_max_pu])[s])
-    
-            bounds_SU_dispatch_ext[s=1:N_fix_SU,t=1:Te],
-                SU_dispatch_ext[s,t] >= 0
-    
-            bounds_SU_store_fix[s=1:N_fix_SU,t=1:Te],
-                (0 <=  SU_store_fix[s,t] <=
-                - (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_min_pu])[s])
-    
-            bounds_SU_store_ext[s=1:N_fix_SU,t=1:Te],
-                SU_store_ext[s,t] >= 0
-    
-            bounds_SU_soc_fix[s=1:N_fix_SU,t=1:Te],
-                0 <= SU_soc_fix[s,t] <= 
-                (storage_units[fix_sus_b,:max_hours] .* storage_units[fix_sus_b,:p_nom])[s]
-            
-            bounds_SU_soc_ext[s=1:N_fix_SU,t=1:Te],
-                SU_soc_ext[s,t] >= 0
-            
-            bounds_SU_spill_fix[s=1:N_fix_SU,t=1:Te],
-                0 <=  SU_spill_fix[s,t] <= inflow[:,fix_sus_b][t,s]
-            
-            bounds_SU_spill_ext[s=1:N_fix_SU,t=1:Te],
-                0 <=  SU_spill_ext[s,t] <= inflow[:,ext_sus_b][t,s]
-        end)
-    end
-    
-    if benders != "slave"
-        @constraint(m, bounds_SU_p_nom[s=1:N_ext_SU], 
-            SU_p_nom[s=1:N_ext_SU] >= 0
-        )
-    end
-
-    # 4.4 set constraints for extendable storage_units
-    #println("-- 4.4 set constraints for extendable storage_units")
-    # TODO: fix SU_p_nom with master problem solution
-    if benders != "master" && benders != "slave"
-        @constraints(m, begin
-                su_dispatch_limit[t=1:Te,s=1:N_ext_SU], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
-                su_storage_limit[t=1:Te,s=1:N_ext_SU], SU_store_ext[s,t] <= - SU_p_nom[s].*storage_units[ext_sus_b, :p_min_pu][s]
-                su_capacity_limit[t=1:Te,s=1:N_ext_SU], SU_soc_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :max_hours][s]
-        end)
-    elseif benders == "slave"
-        @constraints(m, begin
-                su_dispatch_limit[t=1:Te,s=1:N_ext_SU], SU_dispatch_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_max_pu][s]
-                su_storage_limit[t=1:Te,s=1:N_ext_SU], SU_store_ext[s,t] <= - storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_min_pu][s]
-                su_capacity_limit[t=1:Te,s=1:N_ext_SU], SU_soc_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :max_hours][s]
-        end)
-    end 
-
-    # 4.5 set charging constraint
-    #println("-- 4.5 set charging constraint")
-    if benders != "master"
-        SU_dispatch = [SU_dispatch_fix; SU_dispatch_ext]
-        SU_store = [SU_store_fix; SU_store_ext]
-        SU_soc = [SU_soc_fix; SU_soc_ext]
-        SU_spill = [SU_spill_fix; SU_spill_ext]
-    end
-
-    storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
-    inflow = [inflow[:,fix_sus_b] inflow[:,ext_sus_b]]
-
-    ext_sus_b = BitArray(storage_units[:p_nom_extendable])
-
-    is_cyclic_i = collect(1:N_SU)[BitArray(storage_units[:cyclic_state_of_charge])]
-    not_cyclic_i = collect(1:N_SU)[.!storage_units[:cyclic_state_of_charge]]
-
-    if benders != "master"
-        @constraints(m, begin
-                su_logic1[s=is_cyclic_i],
-                    SU_soc[s,1] == 
-                    (SU_soc[s,T]
-                    + storage_units[s,:efficiency_store] * SU_store[s,1]
-                    - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
-                    + inflow[1,s] - SU_spill[s,1] )
-
-                su_logic2[s=not_cyclic_i],
-                    SU_soc[s,1] == 
-                    (storage_units[s,:state_of_charge_initial]
-                    + storage_units[s,:efficiency_store] * SU_store[s,1]
-                    - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
-                    + inflow[1,s] - SU_spill[s,1])
-    
-                su_logic3[s=1:N_SU,t=2:T],
-                    SU_soc[s,t] == 
-                    (SU_soc[s,t-1]
-                    + storage_units[s,:efficiency_store] * SU_store[s,t]
-                    - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,t]
-                    + inflow[t,s] - SU_spill[s,t] )
-        end)
-    end
-
-# --------------------------------------------------------------------------------------------------------
-
-# 5. define stores
-    println("Adding stores to the model.")
-
-    # 5.1 set different stores types
-    #println("-- 5.1 set different stores types")
-    stores = network.stores
-
-    fix_stores_b = .!stores[:e_nom_extendable]
-    ext_stores_b = .!fix_stores_b
-
-    inflow = get_switchable_as_dense(network, "stores", "inflow")
-
-    #  5.3 set variables
-    #println("-- 5.3 set variables")
-    if benders != "master"
-        @constraints(m, begin
-            bounds_ST_dispatch_fix[s=1:N_fix_ST,t=1:Te],
-                (0 <=  ST_dispatch_fix[s,t] <=
-                (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_max_pu])[s])
-
-            bounds_ST_dispatch_ext[s=1:N_fix_ST,t=1:Te],
-                ST_dispatch_ext[s,t] >= 0
-
-            bounds_ST_store_fix[s=1:N_fix_ST,t=1:Te],
-                (0 <=  ST_store_fix[s,t] <=
-                - (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_min_pu])[s])
-
-            bounds_ST_store_ext[s=1:N_fix_ST,t=1:Te],
-                ST_store_ext[s,t] >= 0
-
-            bounds_ST_soc_fix[s=1:N_fix_ST,t=1:Te],
-                0 <= ST_soc_fix[s,t] <= 
-                (stores[fix_stores_b,:max_hours] .* stores[fix_stores_b,:e_nom])[s]
-
-            bounds_ST_soc_ext[s=1:N_fix_ST,t=1:Te],
-                ST_soc_ext[s,t] >= 0
-
-            bounds_ST_spill_fix[s=1:N_fix_ST,t=1:Te],
-                0 <=  ST_spill_fix[s,t] <= 
-                inflow[:,fix_stores_b][s,t]
-
-            bounds_ST_spill_ext[s=1:N_fix_ST,t=1:Te],
-                0 <=  ST_spill_ext[s,t] <= 
-                inflow[:,ext_stores_b][s,t]
-        end)
-    end
-    
-    if benders != "slave"
-        @constraint(m, bounds_ST_e_nom[s=1:N_ext_ST],
-            ST_e_nom[s] >= 0
-        )
-    end
-
-    # 5.4 set constraints for extendable stores
-    #println("-- 5.4 set constraints for extendable stores")
-    # TODO: fix ST_e_nom from master problem solution
-    if benders != "master" && benders != "slave"
-        @constraints(m, begin
-                st_dispatch_limit[t=1:Te,s=1:N_ext_ST], 
-                    ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
-                st_storage_limit[t=1:Te,s=1:N_ext_ST], 
-                    ST_store_ext[s,t] <= - ST_e_nom[s].*stores[ext_stores_b, :e_min_pu][s]
-                st_capacity_limit[t=1:Te,s=1:N_ext_ST], 
-                    ST_soc_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :max_hours][s]
-        end)
-    elseif benders == "slave"
-        @constraints(m, begin
-                st_dispatch_limit[t=1:Te,s=1:N_ext_ST],
-                    ST_dispatch_ext[s,t] <= 
-                    stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_max_pu][s]
-                st_storage_limit[t=1:Te,s=1:N_ext_ST],
-                    ST_store_ext[s,t] <= 
-                    - stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_min_pu][s]
-                st_capacity_limit[t=1:Te,s=1:N_ext_ST],
-                    ST_soc_ext[s,t] <= 
-                    stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :max_hours][s]
-        end)
-    end
-
-    # 5.5 set charging constraint
-    #println("-- 5.5 set charging constraint")
-    if benders != "master"
-        ST_dispatch = [ST_dispatch_fix; ST_dispatch_ext]
-        ST_store = [ST_store_fix; ST_store_ext]
-        ST_soc = [ST_soc_fix; ST_soc_ext]
-        ST_spill = [ST_spill_fix, ST_spill_ext]
-    end
-    stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
-    inflow = [inflow[:,fix_stores_b] inflow[:,ext_stores_b]]
-
-    ext_stores_b = BitArray(stores[:e_nom_extendable])
-
-    is_cyclic_i = collect(1:N_ST)[BitArray(stores[:cyclic_state_of_charge])]
-    not_cyclic_i = collect(1:N_ST)[.!stores[:cyclic_state_of_charge]]
-
-    if benders != "master"
-        @constraints(m, begin
-
-                st_logic1[s=is_cyclic_i,t=1], 
-                    ST_soc[s,t] == 
-                    (ST_soc[s,T]
-                    + stores[s,:efficiency_store] * ST_store[s,t]
-                    - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
-                    + inflow[t,s] - ST_spill[s,t])
-    
-                st_logic2[s=not_cyclic_i,t=1], 
-                    ST_soc[s,t] == 
-                    (stores[s,:state_of_charge_initial]
-                    + stores[s,:efficiency_store] * ST_store[s,t]
-                    - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
-                    + inflow[t,s] - ST_spill[s,t])
-    
-                st_logic3[s=is_cyclic_i,t=2:T], 
-                    ST_soc[s,t] == 
-                    (ST_soc[s,t-1]
-                    + stores[s,:efficiency_store] * ST_store[s,t]
-                    - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
-                    + inflow[t,s] - ST_spill[s,t])
-
-        end)
-    end
-
-# --------------------------------------------------------------------------------------------------------
-
-# 6. power flow formulations
-
-    println("Adding power flow formulation $formulation to the model.")
-
-    if benders != "master"
-
-        # a.1 linear angles formulation
-        if formulation == "angles_linear"
-
-            # load data in correct order
-            loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-            @constraint(m, voltages[t=1:Te,n=1:N],
-
-                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                      .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
-            )
-            
-            # TODO: smart rescaling factor
-            rescaling ? resc_factor = 1e-2 : nothing
-
-            @constraint(m, flows[t=1:Te,l=1:L], 
-                resc_factor*LN[l, t] == 
-                resc_factor*lines[:x_pu][l]^(-1) *     
-                ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
-            )
-
-            @constraint(m, slack[t=1:Te], THETA[1,t] == 0 )
-
-        elseif formulation == "angles_linear_integer_bigm"
-
-            #bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-            #bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-
-            # load data in correct order
-            loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-            @constraint(m, voltages[t=1:Te,n=1:N], (
-
-                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
-
-            @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=1:Te],
-                (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] +
-                (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
-                + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
-                *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] >= 0
-            )
-
-            @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=1:Te],
-                (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] 
-                + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
-                + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
-                *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] <= 0
-            )
-
-            @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=1:Te],
-                LN[l, t] == lines[:x_pu][l]^(-1) *
-                ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) 
-            )   
-            
-            @constraint(m, slack[t=1:Te], THETA[1,t] == 0)
-
-        elseif formulation == "angles_bilinear"
-
-            # cannot be solved by Gurobi, needs Ipopt!
-            # needs investment_type defined!
-            # requires starting reactance and line capacity!
-
-            # load data in correct order
-            loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-            @constraint(m, voltages[t=1:Te,n=1:N], (
-
-                      sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                    - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )        
-            )
-
-            @NLconstraint(m, flows_ext[t=1:Te,l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b))],
-                LN[l, t] ==  
-                (1 + LN_inv[l] / lines[:num_parallel][l]) * lines[:x_pu][l]^(-1) *
-                (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) 
-            )
-
-            @constraint(m, flows_nonext[t=1:Te,l=1:(sum(fix_lines_b))],
-                LN[l, t] == lines[:x_pu][l]^(-1) *
-                ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) 
-            )                                                   
-
-            @constraint(m, slack[t=1:Te], THETA[1,t] == 0)
-
-        # b.1 linear kirchhoff formulation
-        elseif formulation == "kirchhoff_linear"
-
-            #load data in correct order
-            loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-            @constraint(m, balance[t=1:Te,n=1:N], (
-                sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                    .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                == 0 )
-            )
-
-            # Might be nessecary to loop over all subgraphs as
-            # for (sn, sub) in enumerate(weakly_connected_components(g))
-            #     g_sub = induced_subgraph(g, sub)[1]
-
-            append_idx_col!(lines)
-            (branches, var, attribute) = (lines, LN, :x)
-            cycles = get_cycles(network)
-            if ndims(cycles)<2
-                cycles = [cycle for cycle in cycles if length(cycle)>2]
-            else
-                cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
-            end
-            if length(cycles)>0
-                cycles_branch = Array{Int64,1}[]
-                directions = Array{Float64,1}[]
-                for cyc=1:length(cycles)
-                    push!(cycles_branch,Int64[])
-                    push!(directions,Float64[])
-                    for bus=1:length(cycles[cyc])
-                        bus0 = cycles[cyc][bus]
-                        bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
-                        try
-                            push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
-                                        .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
-                            push!(directions[cyc], 1.)
-                        catch y
-                            if isa(y, BoundsError)
-                                push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
-                                                .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
-                                push!(directions[cyc], -1.)
-                            else
-                                return y
-                            end
-                        end
-                    end
-                end
-                if attribute==:x
-                    @constraint(m, line_cycle_constraint[t=1:Te,c=1:length(cycles_branch)] ,
-                            dot(directions[c] .* lines[cycles_branch[c], :x_pu],
-                                LN[cycles_branch[c],t]) == 0
-                    )
-                # elseif attribute==:r
-                #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:Te] ,
-                #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
-                end
-            end
-
-        # b.2 bilinear kirchhoff formulation (steps derived from original s_nom and x)
-        elseif formulation == "kirchhoff_bilinear"
-
-            # cannot be solved by Gurobi, needs Ipopt!
-            # needs investment_type defined!
-            # requires starting reactance and line capacity!
-
-            #load data in correct order
-            loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-            @constraint(m, balance[t=1:Te,n=1:N], (
-
-                sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                    .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                == 0 )
-            )
-
-            # Might be nessecary to loop over all subgraphs as
-            # for (sn, sub) in enumerate(weakly_connected_components(g))
-            #     g_sub = induced_subgraph(g, sub)[1]
-
-            append_idx_col!(lines)
-            (branches, var, attribute) = (lines, LN, :x)
-            cycles = get_cycles(network)
-            if ndims(cycles)<2
-                cycles = [cycle for cycle in cycles if length(cycle)>2]
-            else
-                cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
-            end
-            if length(cycles)>0
-                cycles_branch = Array{Int64,1}[]
-                directions = Array{Float64,1}[]
-                for cyc=1:length(cycles)
-                    push!(cycles_branch,Int64[])
-                    push!(directions,Float64[])
-                    for bus=1:length(cycles[cyc])
-                        bus0 = cycles[cyc][bus]
-                        bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
-                        try
-                            push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
-                                        .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
-                            push!(directions[cyc], 1.)
-                        catch y
-                            if isa(y, BoundsError)
-                                push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
-                                                .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
-                                push!(directions[cyc], -1.)
-                            else
-                                return y
-                            end
-                        end
-                    end
-                end
-                if attribute==:x
-                    @NLconstraint(m, line_cycle_constraint[t=1:Te,c=1:length(cycles_branch)] ,
-                            sum(      directions[c][l] 
-                                    * lines[cycles_branch[c], :x_pu][l] 
-                                    * (1+LN_inv[cycles_branch[c]][l] / lines[cycles_branch[c], :num_parallel][l])^(-1)
-                                    #--* (1+LN_inv[cycles_branch[c]][l])^(-1)
-                                    * LN[cycles_branch[c],t][l]
-                            for l=1:length(directions[c])
-                            )               
-                                == 0)
-                # elseif attribute==:r
-                #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:Te] ,
-                #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
-                end
-            end
-
-        # c.1 linear ptdf formulation
-        elseif formulation == "ptdf"
-
-            ptdf = ptdf_matrix(network)
-
-            #load data in correct order
-            loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
-
-            @constraint(m, flows[t=1:Te,l=1:L],
-                sum( ptdf[l,n]
-                * (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-                    )
-                for n in 1:N
-                ) == LN[l,t] 
-            )
-
-            @constraint(m, balance[t=1:Te],
-                sum( (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-                    ) for n in 1:N
-                ) == 0 
-            )
-
-        else
-            println("The formulation $formulation is not implemented.")
-        end
-    end
-
-# --------------------------------------------------------------------------------------------------------
-
-# 7. set global_constraints
-
-    #TODO: master or slave?
-
-    #TODO: outside for t loop
-
-    # 7.1 carbon constraint
-    println("Adding global CO2 constraints to the model.")
-
-    subannual_adjustment_factor = 1# 8760 / nrow(network.snapshots)
-
-    # TODO: set smart scaling factor
-    rescaling ? resc_factor = 1e2 : nothing
-    
-    carrier_index(carrier) = findin(generators[:carrier], carrier)
-
-    # # TODO: get rid of adjustment factor.
-    if benders != "master" && length(1:Te)>1
-        if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:name])
-            co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
-            println("CO2_limit is $(co2_limit[1]) t")
-            nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
-            @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
-                        G[carrier_index(nonnull_carriers),t]) for t=1:T)
-                        * select_names(network.carriers, [carrier])[:co2_emissions]
-                        for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
-        end
-    end
-
-    # 7.2 limit on transmission expansion volume
-    # sum of capacity expansion times length over all lines <= limit in MWkm unit
-    if benders != "slave"
-        if nrow(network.global_constraints)>0 && in("mwkm_limit", network.global_constraints[:name])
-            mwkm_limit = network.global_constraints[network.global_constraints[:name].=="mwkm_limit", :constant]
-            println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
-            @constraint(m, mwkmlimit, 
-                dot(LN_s_nom,lines[:length]) <= mwkm_limit[1] * dot(lines[:s_nom],lines[:length])
-            )
-        end
-    end
-
-    # 7.3 specified percentage of renewable energy generation
-    # sum of renewable generation =/>= percentage * sum of total generation
-    if benders != "master" && length(1:Te)>1
-        if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
-            restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
-            println("Target share of renewable energy is $(restarget[1]*100) %")
-            null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
-            @constraint(m, restarget,
-              sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
-              >= restarget[1] * sum(sum(network.snapshots[:weightings][t]*G[:,t] for t=1:T))
-            )
-        end
-    end
-
-    # 7.4 fake specified percentages of renewable energy generation (if there is no/little curtailment)
-    if benders != "slave"
-        if nrow(network.global_constraints)>0 && in("fakerestarget", network.global_constraints[:name])
-
-            N_loads = size(network.loads_t["p_set"])[2]
-            fakerestarget = network.global_constraints[network.global_constraints[:name].=="fakerestarget", :constant]
-
-            println("Target share of renewable energy is $(fakerestarget[1]*100) %")
-
-            null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
-
-            ren_gens_b = [in(i,carrier_index(null_carriers)) ? true : false for i=1:size(generators)[1]]
-            fix_ren_gens_b = .!generators[:p_nom_extendable][ren_gens_b]
-            ext_ren_gens_b = .!fix_ren_gens_b
-
-            ren_gens_b_orig = [in(i,findin(network.generators[:carrier], null_carriers)) ? true : false for i=1:size(network.generators)[1]]
-            fix_ren_gens_b_orig = .!network.generators[:p_nom_extendable][ren_gens_b_orig]
-            ext_ren_gens_b_orig = .!fix_ren_gens_b_orig
-
-            fix_ren_gens = generators[fix_gens_b .& ren_gens_b,:]
-            ext_ren_gens = generators[ext_gens_b .& ren_gens_b,:]
-
-            def_p_max_pu_ext = 8760.0*ext_ren_gens[:p_max_pu]
-            def_p_max_pu_fix = 8760.0*fix_ren_gens[:p_max_pu]
-            
-            p_max_pu = network.generators_t["p_max_pu"][:,2:end]
-            p_max_pu_fix = convert(Array,p_max_pu[:,fix_ren_gens_b_orig])
-            p_max_pu_ext = convert(Array,p_max_pu[:,ext_ren_gens_b_orig])
-
-            loc_fix = findin(fix_ren_gens[:name], string.(p_max_pu.colindex.names))
-            loc_ext = findin(ext_ren_gens[:name], string.(p_max_pu.colindex.names))
-
-            loc_fix_b = [in(i,loc_fix) ? true : false for i=1:length(def_p_max_pu_fix)]
-            loc_ext_b = [in(i,loc_ext) ? true : false for i=1:length(def_p_max_pu_ext)]
-            
-            sum_of_p_max_pu_fix = sum(network.snapshots[:weightings][t]*p_max_pu_fix[t,:] for t=1:T)
-            sum_of_p_max_pu_ext = sum(network.snapshots[:weightings][t]*p_max_pu_ext[t,:] for t=1:T)
-
-            def_p_max_pu_ext[loc_ext_b] .= sum_of_p_max_pu_ext
-            def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix
-
-            @constraint(m, fakerestarget,
-                dot(def_p_max_pu_fix,fix_ren_gens[:p_nom]) +
-                dot(def_p_max_pu_ext,G_p_nom)
-                >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
-            )
-        end
-    end
-    
-
-# --------------------------------------------------------------------------------------------------------
-
-# 8. set objective function
-    println("Adding objective to the model.")
-
-    operationcost_adjustment_factor = 1#subannual_adjustment_factor#*30 # scale marginal cost to one year to coincide with annuities + operation cost factor
-
-    #TODO: probably get rid of operationscost_adjustment_factor if weightings are used.
-
-    if benders!="master" && benders!="slave"
-
-        @objective(m, Min,
-                operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:Te)
-                + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
-                + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
-
-                + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-                + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
-
-                + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
-                + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
-
-                + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:Te)
-                + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
-                + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
-
-                + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:Te)
-                + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-                + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
-        )
-
-    elseif benders == "master"
-
-        @variable(m, ALPHA)
-
-        # TODO: master objective function
-        @objective(m, Min,
-              dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
-            + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
-    
-            + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
-            + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
-    
-            + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
-            + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
-    
-            + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
-            + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
-    
-            + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
-            + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
-    
-            + ALPHA
-        )
-
-    elseif benders == "slave"
+        # 2.5 add integer variables if applicable
+        #println("-- 2.5 add integer variables if applicable")
         
-        # TODO: slave objective function
-        @objective(m, Min,
-            operationcost_adjustment_factor*(
-                    sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:Te)
-                + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:Te)
-                + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:Te)
-            )
-        )
+        if benders != "slave"  && count==nt
+            if investment_type == "continuous"
 
-    else
-        error()
-    end
+                @constraint(m, continuous[l=1:N_ext_LN],
+                    LN_s_nom[l] ==
+                    (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
+                )
+                
+            elseif investment_type == "integer"
+
+                @constraint(m, continuous[l=1:N_ext_LN],
+                    LN_s_nom[l] ==
+                    (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
+                )
+                
+            elseif investment_type == "binary"
+
+                bigM_default = 1e4
+                bigM = min.(lines[ext_lines_b,:s_nom_max],bigM_default)
+
+                @constraints(m, begin
+
+                    binary1[l=1:N_ext_LN],
+                        - bigM[l] * (1-LN_opt[l]) + lines[ext_lines_b,:s_nom_ext_min][l] <= LN_inv[l]
+
+                    binary2[l=1:N_ext_LN],
+                        0 <= LN_inv[l] # no reduction of capacity allowed
+
+                    binary3[l=1:N_ext_LN],
+                        bigM[l] * LN_opt[l] >= LN_inv[l]
+
+                    binary4[l=1:N_ext_LN],
+                        LN_s_nom[l] == 
+                        (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
+
+                end)
+
+            elseif investment_type == "integer_bigm"
+                
+                @constraint(m, logical[l=1:N_ext_LN], sum(LN_opt[l,c] for c in candidates[l]) == 1.0)
+
+                @constraint(m, integer_binary_reformulation[l=1:N_ext_LN],
+                    LN_s_nom[l] ==
+                    (1+sum(c*LN_opt[l,c] for c in candidates[l]) / lines[ext_lines_b,:num_parallel][l])
+                    * lines[ext_lines_b,:s_nom][l]
+                )
+                
+            end
+        end
+
+        lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
+        fix_lines_b = (.!lines[:s_nom_extendable])
+        ext_lines_b = .!fix_lines_b
+
+    # --------------------------------------------------------------------------------------------------------
+
+    # 3. add all links to the model
+        println("Adding links to the model.")
+
+        # 3.1 set different link types
+        #println("-- 3.1 set different link types")
+        links = network.links
+        fix_links_b = .!links[:p_nom_extendable]
+        ext_links_b = .!fix_links_b
+
+        #  3.3 set link variables
+        #println("-- 3.3 set link variables")
+
+        # TODO: tcurr
+        if benders != "master"
+            @constraint(m, bounds_LK_fix[l=1:N_fix_LK,t=count],
+            ((links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l] 
+            <=  LK_fix[l,t] <= 
+            (links[fix_links_b, :p_nom].*links[fix_links_b, :p_max_pu])[l])
+            )
+        end
+
+        if benders != "slave" && count==nt
+            @constraint(m, bounds_LK_p_nom[l=1:N_ext_LK],
+                links[ext_links_b, :p_nom_min][l]
+                <=  LK_p_nom[l] <=
+                links[ext_links_b, :p_nom_max][l]
+            )
+        end
+
+        # 3.4 set constraints for extendable links
+        #println("-- 3.4 set constraints for extendable links")
+
+        # TODO: fix LK_p_nom from master problem solution
+        if benders != "master" && benders != "slave"
+            @constraints(m, begin
+                lower_link_limit[t=count,l=1:N_ext_LK],
+                    LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
+                upper_link_limit[t=tcurr,l=1:N_ext_LK],
+                    LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
+            end)
+        elseif benders == "slave"
+            @constraint(m, lower_link_limit[t=count,l=1:N_ext_LK],
+                    LK_ext[l,count] >= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_min_pu][l]
+            )
+
+            @constraint(m, upper_link_limit[t=count,l=1:N_ext_LK],
+                    LK_ext[l,count] <= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_max_pu][l]
+            )
+        end
+
+        links = [links[fix_links_b,:]; links[ext_links_b,:]]
+        fix_links_b = .!links[:p_nom_extendable]
+        ext_links_b = .!fix_links_b
+
+    # --------------------------------------------------------------------------------------------------------
+
+    # TODO: not made for benders and individual snapshots yet!
+    # 4. define storage_units
+        println("Adding storage units to the model.")
+
+        # 4.1 set different storage_units types
+        #println("-- 4.1 set different storage_units types")
+        storage_units = network.storage_units
+        fix_sus_b = .!storage_units[:p_nom_extendable]
+        ext_sus_b = .!fix_sus_b
+
+        inflow = get_switchable_as_dense(network, "storage_units", "inflow")
+
+        #  4.3 set variables
+        #println("-- 4.3 set variables")
+        if benders != "master"
+            @constraints(m, begin
+                bounds_SU_dispatch_fix[s=1:N_fix_SU,t=count], 
+                    (0 <=  SU_dispatch_fix[s,t] <=
+                    (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_max_pu])[s])
+        
+                bounds_SU_dispatch_ext[s=1:N_fix_SU,t=count],
+                    SU_dispatch_ext[s,t] >= 0
+        
+                bounds_SU_store_fix[s=1:N_fix_SU,t=count],
+                    (0 <=  SU_store_fix[s,t] <=
+                    - (storage_units[fix_sus_b, :p_nom].*storage_units[fix_sus_b, :p_min_pu])[s])
+        
+                bounds_SU_store_ext[s=1:N_fix_SU,t=count],
+                    SU_store_ext[s,t] >= 0
+        
+                bounds_SU_soc_fix[s=1:N_fix_SU,t=count],
+                    0 <= SU_soc_fix[s,t] <= 
+                    (storage_units[fix_sus_b,:max_hours] .* storage_units[fix_sus_b,:p_nom])[s]
+                
+                bounds_SU_soc_ext[s=1:N_fix_SU,t=count],
+                    SU_soc_ext[s,t] >= 0
+                
+                bounds_SU_spill_fix[s=1:N_fix_SU,t=tcurr],
+                    0 <=  SU_spill_fix[s,count] <= inflow[:,fix_sus_b][t,s]
+                
+                bounds_SU_spill_ext[s=1:N_fix_SU,t=tcurr],
+                    0 <=  SU_spill_ext[s,count] <= inflow[:,ext_sus_b][t,s]
+            end)
+        end
+        
+        if benders != "slave" && count==nt
+            @constraint(m, bounds_SU_p_nom[s=1:N_ext_SU], 
+                SU_p_nom[s=1:N_ext_SU] >= 0
+            )
+        end
+
+        # 4.4 set constraints for extendable storage_units
+        #println("-- 4.4 set constraints for extendable storage_units")
+        # TODO: fix SU_p_nom with master problem solution
+        if benders != "master" && benders != "slave"
+            @constraints(m, begin
+                    su_dispatch_limit[t=count,s=1:N_ext_SU], SU_dispatch_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :p_max_pu][s]
+                    su_storage_limit[t=count,s=1:N_ext_SU], SU_store_ext[s,t] <= - SU_p_nom[s].*storage_units[ext_sus_b, :p_min_pu][s]
+                    su_capacity_limit[t=count,s=1:N_ext_SU], SU_soc_ext[s,t] <= SU_p_nom[s].*storage_units[ext_sus_b, :max_hours][s]
+            end)
+        elseif benders == "slave"
+            @constraints(m, begin
+                    su_dispatch_limit[t=count,s=1:N_ext_SU], SU_dispatch_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_max_pu][s]
+                    su_storage_limit[t=count,s=1:N_ext_SU], SU_store_ext[s,t] <= - storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :p_min_pu][s]
+                    su_capacity_limit[t=count,s=1:N_ext_SU], SU_soc_ext[s,t] <= storage_units[ext_sus_b, :p_nom][s].*storage_units[ext_sus_b, :max_hours][s]
+            end)
+        end 
+
+        storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
+        inflow = [inflow[:,fix_sus_b] inflow[:,ext_sus_b]]
+
+        ext_sus_b = BitArray(storage_units[:p_nom_extendable])
+
+        is_cyclic_i = collect(1:N_SU)[BitArray(storage_units[:cyclic_state_of_charge])]
+        not_cyclic_i = collect(1:N_SU)[.!storage_units[:cyclic_state_of_charge]]
+
+        if benders != "master"
+            @constraints(m, begin
+                    su_logic1[s=is_cyclic_i],
+                        SU_soc[s,1] == 
+                        (SU_soc[s,T]
+                        + storage_units[s,:efficiency_store] * SU_store[s,1]
+                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
+                        + inflow[1,s] - SU_spill[s,1] )
+
+                    su_logic2[s=not_cyclic_i],
+                        SU_soc[s,1] == 
+                        (storage_units[s,:state_of_charge_initial]
+                        + storage_units[s,:efficiency_store] * SU_store[s,1]
+                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
+                        + inflow[1,s] - SU_spill[s,1])
+        
+                    su_logic3[s=1:N_SU,t=2:T],
+                        SU_soc[s,t] == 
+                        (SU_soc[s,t-1]
+                        + storage_units[s,:efficiency_store] * SU_store[s,t]
+                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,t]
+                        + inflow[t,s] - SU_spill[s,t] )
+            end)
+        end
+
+    # --------------------------------------------------------------------------------------------------------
+
+    # 5. define stores
+        println("Adding stores to the model.")
+
+        # 5.1 set different stores types
+        #println("-- 5.1 set different stores types")
+        stores = network.stores
+
+        fix_stores_b = .!stores[:e_nom_extendable]
+        ext_stores_b = .!fix_stores_b
+
+        inflow = get_switchable_as_dense(network, "stores", "inflow")
+
+        #  5.3 set variables
+        #println("-- 5.3 set variables")
+        if benders != "master"
+            @constraints(m, begin
+                bounds_ST_dispatch_fix[s=1:N_fix_ST,t=count],
+                    (0 <=  ST_dispatch_fix[s,t] <=
+                    (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_max_pu])[s])
+
+                bounds_ST_dispatch_ext[s=1:N_fix_ST,t=count],
+                    ST_dispatch_ext[s,t] >= 0
+
+                bounds_ST_store_fix[s=1:N_fix_ST,t=count],
+                    (0 <=  ST_store_fix[s,t] <=
+                    - (stores[fix_stores_b, :e_nom].*stores[fix_stores_b, :e_min_pu])[s])
+
+                bounds_ST_store_ext[s=1:N_fix_ST,t=count],
+                    ST_store_ext[s,t] >= 0
+
+                bounds_ST_soc_fix[s=1:N_fix_ST,t=count],
+                    0 <= ST_soc_fix[s,t] <= 
+                    (stores[fix_stores_b,:max_hours] .* stores[fix_stores_b,:e_nom])[s]
+
+                bounds_ST_soc_ext[s=1:N_fix_ST,t=count],
+                    ST_soc_ext[s,t] >= 0
+
+                bounds_ST_spill_fix[s=1:N_fix_ST,t=tcurr],
+                    0 <=  ST_spill_fix[s,count] <= 
+                    inflow[:,fix_stores_b][s,t]
+
+                bounds_ST_spill_ext[s=1:N_fix_ST,t=tcurr],
+                    0 <=  ST_spill_ext[s,count] <= 
+                    inflow[:,ext_stores_b][s,t]
+            end)
+        end
+        
+        if benders != "slave" && count==nt
+            @constraint(m, bounds_ST_e_nom[s=1:N_ext_ST],
+                ST_e_nom[s] >= 0
+            )
+        end
+
+        # 5.4 set constraints for extendable stores
+        #println("-- 5.4 set constraints for extendable stores")
+        # TODO: fix ST_e_nom from master problem solution
+        if benders != "master" && benders != "slave"
+            @constraints(m, begin
+                    st_dispatch_limit[t=count,s=1:N_ext_ST], 
+                        ST_dispatch_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :e_max_pu][s]
+                    st_storage_limit[t=count,s=1:N_ext_ST], 
+                        ST_store_ext[s,t] <= - ST_e_nom[s].*stores[ext_stores_b, :e_min_pu][s]
+                    st_capacity_limit[t=count,s=1:N_ext_ST], 
+                        ST_soc_ext[s,t] <= ST_e_nom[s].*stores[ext_stores_b, :max_hours][s]
+            end)
+        elseif benders == "slave"
+            @constraints(m, begin
+                    st_dispatch_limit[t=count,s=1:N_ext_ST],
+                        ST_dispatch_ext[s,t] <= 
+                        stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_max_pu][s]
+                    st_storage_limit[t=count,s=1:N_ext_ST],
+                        ST_store_ext[s,t] <= 
+                        - stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :e_min_pu][s]
+                    st_capacity_limit[t=count,s=1:N_ext_ST],
+                        ST_soc_ext[s,t] <= 
+                        stores[ext_stores_b, :e_nom][s].*stores[ext_stores_b, :max_hours][s]
+            end)
+        end
+
+        # 5.5 set charging constraint
+        #println("-- 5.5 set charging constraint")
+        stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
+        inflow = [inflow[:,fix_stores_b] inflow[:,ext_stores_b]]
+
+        ext_stores_b = BitArray(stores[:e_nom_extendable])
+
+        is_cyclic_i = collect(1:N_ST)[BitArray(stores[:cyclic_state_of_charge])]
+        not_cyclic_i = collect(1:N_ST)[.!stores[:cyclic_state_of_charge]]
+
+        if benders != "master"
+            @constraints(m, begin
+
+                    st_logic1[s=is_cyclic_i,t=1], 
+                        ST_soc[s,t] == 
+                        (ST_soc[s,T]
+                        + stores[s,:efficiency_store] * ST_store[s,t]
+                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
+                        + inflow[t,s] - ST_spill[s,t])
+        
+                    st_logic2[s=not_cyclic_i,t=1], 
+                        ST_soc[s,t] == 
+                        (stores[s,:state_of_charge_initial]
+                        + stores[s,:efficiency_store] * ST_store[s,t]
+                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
+                        + inflow[t,s] - ST_spill[s,t])
+        
+                    st_logic3[s=is_cyclic_i,t=2:T], 
+                        ST_soc[s,t] == 
+                        (ST_soc[s,t-1]
+                        + stores[s,:efficiency_store] * ST_store[s,t]
+                        - stores[s,:efficiency_dispatch] * ST_dispatch[s,t]
+                        + inflow[t,s] - ST_spill[s,t])
+
+            end)
+        end
+
+    # --------------------------------------------------------------------------------------------------------
+
+    # 6. power flow formulations
+
+        println("Adding power flow formulation $formulation to the model.")
+
+        if benders != "master"
+
+            # a.1 linear angles formulation
+            if formulation == "angles_linear"
+
+                # load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                @constraint(m, voltages[t=count,n=1:N],
+
+                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                        - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                )
+                
+                # TODO: smart rescaling factor
+                rescaling ? resc_factor = 1e-2 : nothing
+
+                @constraint(m, flows[t=count,l=1:L], 
+                    resc_factor*LN[l, t] == 
+                    resc_factor*lines[:x_pu][l]^(-1) *     
+                    ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+                )
+
+                @constraint(m, slack[t=count], THETA[1,t] == 0 )
+
+            elseif formulation == "angles_linear_integer_bigm"
+
+                #bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
+                #bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
+
+                # load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                @constraint(m, voltages[t=count,n=1:N], (
+
+                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                        - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+
+                @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=count],
+                    (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] +
+                    (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
+                    + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
+                    *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] >= 0
+                )
+
+                @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=count],
+                    (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] 
+                    + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
+                    + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
+                    *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t] <= 0
+                )
+
+                @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=count],
+                    LN[l, t] == lines[:x_pu][l]^(-1) *
+                    ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) 
+                )   
+                
+                @constraint(m, slack[t=count], THETA[1,t] == 0)
+
+            elseif formulation == "angles_bilinear"
+
+                # cannot be solved by Gurobi, needs Ipopt!
+                # needs investment_type defined!
+                # requires starting reactance and line capacity!
+
+                # load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                @constraint(m, voltages[t=count,n=1:N], (
+
+                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                                .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                        - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )        
+                )
+
+                @NLconstraint(m, flows_ext[t=count,l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b))],
+                    LN[l, t] ==  
+                    (1 + LN_inv[l] / lines[:num_parallel][l]) * lines[:x_pu][l]^(-1) *
+                    (THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) 
+                )
+
+                @constraint(m, flows_nonext[t=count,l=1:(sum(fix_lines_b))],
+                    LN[l, t] == lines[:x_pu][l]^(-1) *
+                    ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] ) 
+                )                                                   
+
+                @constraint(m, slack[t=count], THETA[1,t] == 0)
+
+            # b.1 linear kirchhoff formulation
+            elseif formulation == "kirchhoff_linear"
+
+                #load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                @constraint(m, balance[t=count,n=1:N], (
+                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                    + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
+                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                    - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
+                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                    == 0 )
+                )
+
+                # Might be nessecary to loop over all subgraphs as
+                # for (sn, sub) in enumerate(weakly_connected_components(g))
+                #     g_sub = induced_subgraph(g, sub)[1]
+
+                append_idx_col!(lines)
+                (branches, var, attribute) = (lines, LN, :x)
+                cycles = get_cycles(network)
+                if ndims(cycles)<2
+                    cycles = [cycle for cycle in cycles if length(cycle)>2]
+                else
+                    cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
+                end
+                if length(cycles)>0
+                    cycles_branch = Array{Int64,1}[]
+                    directions = Array{Float64,1}[]
+                    for cyc=1:length(cycles)
+                        push!(cycles_branch,Int64[])
+                        push!(directions,Float64[])
+                        for bus=1:length(cycles[cyc])
+                            bus0 = cycles[cyc][bus]
+                            bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
+                            try
+                                push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
+                                            .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
+                                push!(directions[cyc], 1.)
+                            catch y
+                                if isa(y, BoundsError)
+                                    push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
+                                                    .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
+                                    push!(directions[cyc], -1.)
+                                else
+                                    return y
+                                end
+                            end
+                        end
+                    end
+                    if attribute==:x
+                        @constraint(m, line_cycle_constraint[t=count,c=1:length(cycles_branch)] ,
+                                dot(directions[c] .* lines[cycles_branch[c], :x_pu],
+                                    LN[cycles_branch[c],t]) == 0
+                        )
+                    # elseif attribute==:r
+                    #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=count] ,
+                    #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
+                    end
+                end
+
+            # b.2 bilinear kirchhoff formulation (steps derived from original s_nom and x)
+            elseif formulation == "kirchhoff_bilinear"
+
+                # cannot be solved by Gurobi, needs Ipopt!
+                # needs investment_type defined!
+                # requires starting reactance and line capacity!
+
+                #load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                @constraint(m, balance[t=count,n=1:N], (
+
+                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                    + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
+                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                    - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
+                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                    == 0 )
+                )
+
+                # Might be nessecary to loop over all subgraphs as
+                # for (sn, sub) in enumerate(weakly_connected_components(g))
+                #     g_sub = induced_subgraph(g, sub)[1]
+
+                append_idx_col!(lines)
+                (branches, var, attribute) = (lines, LN, :x)
+                cycles = get_cycles(network)
+                if ndims(cycles)<2
+                    cycles = [cycle for cycle in cycles if length(cycle)>2]
+                else
+                    cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
+                end
+                if length(cycles)>0
+                    cycles_branch = Array{Int64,1}[]
+                    directions = Array{Float64,1}[]
+                    for cyc=1:length(cycles)
+                        push!(cycles_branch,Int64[])
+                        push!(directions,Float64[])
+                        for bus=1:length(cycles[cyc])
+                            bus0 = cycles[cyc][bus]
+                            bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
+                            try
+                                push!(cycles_branch[cyc],branches[((branches[:bus0].==reverse_busidx[bus0])
+                                            .&(branches[:bus1].==reverse_busidx[bus1])),:idx][1] )
+                                push!(directions[cyc], 1.)
+                            catch y
+                                if isa(y, BoundsError)
+                                    push!(cycles_branch[cyc], branches[((branches[:bus0].==reverse_busidx[bus1])
+                                                    .&(branches[:bus1].==reverse_busidx[bus0])),:idx][1] )
+                                    push!(directions[cyc], -1.)
+                                else
+                                    return y
+                                end
+                            end
+                        end
+                    end
+                    if attribute==:x
+                        @NLconstraint(m, line_cycle_constraint[t=count,c=1:length(cycles_branch)] ,
+                                sum(      directions[c][l] 
+                                        * lines[cycles_branch[c], :x_pu][l] 
+                                        * (1+LN_inv[cycles_branch[c]][l] / lines[cycles_branch[c], :num_parallel][l])^(-1)
+                                        #--* (1+LN_inv[cycles_branch[c]][l])^(-1)
+                                        * LN[cycles_branch[c],t][l]
+                                for l=1:length(directions[c])
+                                )               
+                                    == 0)
+                    # elseif attribute==:r
+                    #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=count] ,
+                    #             dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
+                    end
+                end
+
+            # c.1 linear ptdf formulation
+            elseif formulation == "ptdf"
+
+                ptdf = ptdf_matrix(network)
+
+                #load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                @constraint(m, flows[t=count,l=1:L],
+                    sum( ptdf[l,n]
+                    * (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        )
+                    for n in 1:N
+                    ) == LN[l,t] 
+                )
+
+                @constraint(m, balance[t=count],
+                    sum( (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        ) for n in 1:N
+                    ) == 0 
+                )
+
+            else
+                println("The formulation $formulation is not implemented.")
+            end
+        end
+    
+
+    # --------------------------------------------------------------------------------------------------------
+
+    # 7. set global_constraints
+
+        # 7.1 carbon constraint
+        if count==nt
+            println("Adding global CO2 constraints to the model.")
+    
+            subannual_adjustment_factor = 1# 8760 / nrow(network.snapshots)
+    
+            # TODO: set smart scaling factor
+            rescaling ? resc_factor = 1e2 : nothing
+            
+            carrier_index(carrier) = findin(generators[:carrier], carrier)
+    
+            # # TODO: get rid of adjustment factor.
+            if benders != "master" && nt>1 
+                if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:name])
+                    co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant] / subannual_adjustment_factor
+                    println("CO2_limit is $(co2_limit[1]) t")
+                    nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
+                    @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
+                                G[carrier_index(nonnull_carriers),t]) for t=1:T)
+                                * select_names(network.carriers, [carrier])[:co2_emissions]
+                                for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
+                end
+            end
+    
+            # 7.2 limit on transmission expansion volume
+            # sum of capacity expansion times length over all lines <= limit in MWkm unit
+            if benders != "slave"
+                if nrow(network.global_constraints)>0 && in("mwkm_limit", network.global_constraints[:name])
+                    mwkm_limit = network.global_constraints[network.global_constraints[:name].=="mwkm_limit", :constant]
+                    println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
+                    @constraint(m, mwkmlimit, 
+                        dot(LN_s_nom,lines[:length]) <= mwkm_limit[1] * dot(lines[:s_nom],lines[:length])
+                    )
+                end
+            end
+    
+            # 7.3 specified percentage of renewable energy generation
+            # sum of renewable generation =/>= percentage * sum of total generation
+            if benders != "master" && nt>1
+                if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
+                    restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
+                    println("Target share of renewable energy is $(restarget[1]*100) %")
+                    null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
+                    @constraint(m, restarget,
+                    sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
+                    >= restarget[1] * sum(sum(network.snapshots[:weightings][t]*G[:,t] for t=1:T))
+                    )
+                end
+            end
+    
+            # 7.4 fake specified percentages of renewable energy generation (if there is no/little curtailment)
+            if benders != "slave"
+                if nrow(network.global_constraints)>0 && in("fakerestarget", network.global_constraints[:name])
+    
+                    N_loads = size(network.loads_t["p_set"])[2]
+                    fakerestarget = network.global_constraints[network.global_constraints[:name].=="fakerestarget", :constant]
+    
+                    println("Target share of renewable energy is $(fakerestarget[1]*100) %")
+    
+                    null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
+    
+                    ren_gens_b = [in(i,carrier_index(null_carriers)) ? true : false for i=1:size(generators)[1]]
+                    fix_ren_gens_b = .!generators[:p_nom_extendable][ren_gens_b]
+                    ext_ren_gens_b = .!fix_ren_gens_b
+    
+                    ren_gens_b_orig = [in(i,findin(network.generators[:carrier], null_carriers)) ? true : false for i=1:size(network.generators)[1]]
+                    fix_ren_gens_b_orig = .!network.generators[:p_nom_extendable][ren_gens_b_orig]
+                    ext_ren_gens_b_orig = .!fix_ren_gens_b_orig
+    
+                    fix_ren_gens = generators[fix_gens_b .& ren_gens_b,:]
+                    ext_ren_gens = generators[ext_gens_b .& ren_gens_b,:]
+    
+                    def_p_max_pu_ext = 8760.0*ext_ren_gens[:p_max_pu]
+                    def_p_max_pu_fix = 8760.0*fix_ren_gens[:p_max_pu]
+                    
+                    p_max_pu = network.generators_t["p_max_pu"][:,2:end]
+                    p_max_pu_fix = convert(Array,p_max_pu[:,fix_ren_gens_b_orig])
+                    p_max_pu_ext = convert(Array,p_max_pu[:,ext_ren_gens_b_orig])
+    
+                    loc_fix = findin(fix_ren_gens[:name], string.(p_max_pu.colindex.names))
+                    loc_ext = findin(ext_ren_gens[:name], string.(p_max_pu.colindex.names))
+    
+                    loc_fix_b = [in(i,loc_fix) ? true : false for i=1:length(def_p_max_pu_fix)]
+                    loc_ext_b = [in(i,loc_ext) ? true : false for i=1:length(def_p_max_pu_ext)]
+                    
+                    sum_of_p_max_pu_fix = sum(network.snapshots[:weightings][t]*p_max_pu_fix[t,:] for t=1:T)
+                    sum_of_p_max_pu_ext = sum(network.snapshots[:weightings][t]*p_max_pu_ext[t,:] for t=1:T)
+    
+                    def_p_max_pu_ext[loc_ext_b] .= sum_of_p_max_pu_ext
+                    def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix
+    
+                    @constraint(m, fakerestarget,
+                        dot(def_p_max_pu_fix,fix_ren_gens[:p_nom]) +
+                        dot(def_p_max_pu_ext,G_p_nom)
+                        >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
+                    )
+                end
+            end
+        end
+        
+
+    # --------------------------------------------------------------------------------------------------------
+
+    # 8. set objective function
+
+        if count==nt
+            println("Adding objective to the model.")
+    
+            operationcost_adjustment_factor = 1#subannual_adjustment_factor#*30 # scale marginal cost to one year to coincide with annuities + operation cost factor
+    
+            #TODO: probably get rid of operationscost_adjustment_factor if weightings are used.
+    
+            if benders!="master" && benders!="slave"
+    
+                @objective(m, Min,
+                        operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:Te)
+                        + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
+                        + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+    
+                        + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
+                        + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
+    
+                        + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
+                        + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
+    
+                        + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:Te)
+                        + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
+                        + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
+    
+                        + operationcost_adjustment_factor*sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:Te)
+                        + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
+                        + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+                )
+    
+            elseif benders == "master"
+    
+                @variable(m, ALPHA)
+    
+                # TODO: master objective function
+                @objective(m, Min,
+                    dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
+                    + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+            
+                    + dot(lines[ext_lines_b,:capital_cost], LN_s_nom[:])
+                    + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom])
+            
+                    + dot(links[ext_links_b,:capital_cost], LK_p_nom[:])
+                    + dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom])
+            
+                    + dot(storage_units[ext_sus_b, :capital_cost], SU_p_nom[:])
+                    + dot(storage_units[fix_sus_b,:capital_cost], storage_units[fix_sus_b,:p_nom])
+            
+                    + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
+                    + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+            
+                    + ALPHA
+                )
+    
+            elseif benders == "slave"
+                
+                # TODO: slave objective function
+                @objective(m, Min,
+                    operationcost_adjustment_factor*(
+                            sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:Te)
+                        + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:Te)
+                        + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:Te)
+                    )
+                )
+    
+            else
+                error()
+            end
+        end
+
+        count += 1
+
+    end # for loop
 
     println("Finished building model.")
 

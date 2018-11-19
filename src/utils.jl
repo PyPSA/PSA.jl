@@ -403,3 +403,20 @@ function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6, cm=nothing)
     histogram(elements,nbins=100, title="Distribution of values in constraint matrix -- absolute value range: [$min, $max]",
         xlabel="value / coefficient", ylabel="frequency", size=(1400,800), legend=false, color=:grays)
 end
+
+function line_extensions_candidates(network)
+    candidates = Array{Int64,1}[]
+    lines = network.lines
+    N_ext_LN = sum(.!(.!lines[:s_nom_extendable]))
+    for l=1:N_ext_LN
+        if lines[:s_nom_max][l] != Inf
+            max_extension_float = (lines[:s_nom_max][l] / lines[:s_nom][l] - 1) * lines[:num_parallel][l]
+            max_extension = floor(max_extension_float) 
+            push!(candidates,[i for i=0:max_extension]) # starts from 0 as no extension is also an
+        else
+            # fallback option
+            push!(candidates,[i for i=0:2]) # starts from 0 as no extension is also an
+        end
+    end
+    return candidates
+end

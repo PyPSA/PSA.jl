@@ -382,9 +382,14 @@ function constraintmatrix(model::JuMP.Model; nz::Bool=false)
     return cm
 end
 
+
+
 function plot_cm_nonzeroentries(model::JuMP.Model; cm=nothing)
     if cm == nothing
         cm = constraintmatrix(model, nz=true)
+        colSwitch = colswitch_cm(model)
+        println(colSwitch)
+        cm = full(cm)[:,colSwitch]
     end
     xs = [string("x",i) for i = 1:size(cm)[1]]
     ys = [string("y",i) for i = 1:size(cm)[2]]
@@ -402,6 +407,19 @@ function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6, cm=nothing)
     filter!(x -> x >= -cutoff, elements)
     histogram(elements,nbins=100, title="Distribution of values in constraint matrix -- absolute value range: [$min, $max]",
         xlabel="value / coefficient", ylabel="frequency", size=(1400,800), legend=false, color=:grays)
+end
+
+function colswitch_cm(model::JuMP.Model)
+    model.objDict # produces model.colNames
+    variables = model.colNames
+    println(model.colNames)
+    switches = []
+    T = size(model[:LN_ext])[2]
+    push!(switches,find(x->x==true, .![contains(i, ",") for i in variables]))
+    for t=1:T
+        push!(switches,find(x->x==true, [contains(i, ",$t]") for i in variables]))
+    end
+    return reverse(vcat(switches...))
 end
 
 function line_extensions_candidates(network)

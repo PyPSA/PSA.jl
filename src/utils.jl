@@ -338,7 +338,7 @@ function print_active_constraints!(m::JuMP.Model)
 
 end
 
-# TODO: choosing individual snapshots
+# choosing individual snapshots
 function set_snapshots_start_end!(network, starting::String, ending::String)
 
     df = network.snapshots
@@ -352,9 +352,8 @@ function set_snapshots_start_end!(network, starting::String, ending::String)
 
 end
 
-# TODO: simple approach, more sophisticated method would cluster
+# simple approach, more sophisticated method would cluster
 function set_snapshots_sampling!(network, sampling_rate)
-
     T = nrow(network.snapshots)
     rows_to_delete = setdiff(collect(1:T),collect(1:sampling_rate:T))
     network.snapshots = deleterows!(network.snapshots,rows_to_delete)

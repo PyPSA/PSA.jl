@@ -2,19 +2,17 @@ using JuMP
 #using CPLEX
 using MathProgBase
 
-include("utils.jl")
-
 # set parameters
-iteration = 1
-tolerance = 1e-4
+tolerance = 1e4 # TODO: adapt to needs
 bigM = 1e12 # TODO: high enough?
+max_iterations = 10
 
 # run benders decomposition
 # TODO: neglects storage units, storages, and links at the moment!
 function run_benders_lopf(network, solver)
 
-    T = nrow(snapshots)
-    ext_gens_b = ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
+    T = nrow(network.snapshots)
+    ext_gens_b = ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
     ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
     N_ext_G = sum(ext_gens_b)
     N_ext_LN = sum(ext_lines_b)
@@ -30,10 +28,17 @@ function run_benders_lopf(network, solver)
     model_master = build_lopf(network, solver, benders="master")
     model_slave = build_lopf(network, solver, benders="slave")
 
+    println(model_master)
+
     vars_master = getvariables(model_master)
     vars_slave = getvariables(model_slave)
+
+    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
+    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
             
-    while(true) # set termination condition later
+    iteration = 1
+
+    while(iteration <= max_iterations) # set termination condition later
         
         println("\n-----------------------")
         println("Iteration number = ", iteration)
@@ -59,14 +64,14 @@ function run_benders_lopf(network, solver)
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
 
         else
-            error("Odd status of master problem!")
+            error("Odd status of master problem: $status_master")
         end
 
         println("Status of the master problem is ", status_master, 
         "\nwith objective_master_current = ", objective_master_current, 
         "\nG_p_nom_current = ", G_p_nom_current,
         "\nLN_s_nom_current = ", LN_s_nom_current,
-        "\nalpha = ", getvalue(model[:ALPHA]))
+        "\nalpha = ", getvalue(model_master[:ALPHA]))
      
         # adapt RHS of slave model with solution from master problem
 
@@ -74,37 +79,45 @@ function run_benders_lopf(network, solver)
 
             for gr=1:N_ext_G
                 JuMP.setRHS(
-                    model[:lower_gen_limit][t,gr],
-                    G_p_nom_current[gr]*resc_factor*p_min_pu(t,gr)
+                    model_slave[:lower_gen_limit][t,gr],
+                    G_p_nom_current[gr]*p_min_pu(t,gr)
                 )
                 JuMP.setRHS(
-                    model[:upper_gen_limit][t,gr],
-                    G_p_nom_current[gr]*resc_factor*p_max_pu(t,gr)
+                    model_slave[:upper_gen_limit][t,gr],
+                    G_p_nom_current[gr]*p_max_pu(t,gr)
                 )
             end
 
             for l=1:N_ext_LN
                 JuMP.setRHS(
-                    model[:lower_line_limit][t,l],
-                    -resc_factor*lines[:s_max_pu][l]*LN_s_nom_current[l]
+                    model_slave[:lower_line_limit][t,l],
+                    -network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
                 )
                 JuMP.setRHS(
-                    model[:upper_line_limit][t,l],
-                    resc_factor*lines[:s_max_pu][l]*LN_s_nom_current[l]
+                    model_slave[:upper_line_limit][t,l],
+                    network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
                 )
             end
 
         end
 
-        print("\nThe current slave-problem model is \n", model_slave)
-
         status_slave = solve(model_slave)
 
-        objective_slave_current = getobjectivevalue(model_slave)
-        duals_lower_gen_limit = getdual(model[:lower_gen_limit])
-        duals_upper_gen_limit = getdual(model[:upper_gen_limit])
-        duals_lower_line_limit = getdual(model[:lower_line_limit])
-        duals_upper_line_limit = getdual(model[:upper_line_limit])
+        # TODO: check
+        investment_cost = objective_master_current - getvalue(model_master[:ALPHA])
+
+        objective_slave_current = investment_cost + getobjectivevalue(model_slave)
+        duals_lower_gen_limit = getdual(model_slave[:lower_gen_limit])
+        duals_upper_gen_limit = getdual(model_slave[:upper_gen_limit])
+        duals_lower_line_limit = getdual(model_slave[:lower_line_limit])
+        duals_upper_line_limit = getdual(model_slave[:upper_line_limit])
+
+        # TODO: why do my duals not change?
+        println("---")
+        println(duals_upper_gen_limit)
+        println("---")
+        println(duals_upper_line_limit)
+        println("---")
 
         println("Status of the slaveproblem is ", status_slave, 
         "\nwith GAP ", objective_slave_current - objective_master_current,
@@ -126,17 +139,39 @@ function run_benders_lopf(network, solver)
 
             println("\nThere is a suboptimal vertex, add the corresponding constraint")
             # TODO: add cuts
-            #@constraint(model_master,alpha>=(muCurrent.*supply)'*x + sum(lambdaCurrent.*demand))
-        
+            # TODO: unsure about sign
+            @constraint(model_master, model_master[:ALPHA] >=
+
+                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                    + duals_upper_gen_limit[t,gr] * (-1) * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                for t=1:T for gr=1:N_ext_G)
+                + 
+                sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    + duals_upper_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                for t=1:T for l=1:N_ext_LN)
+            
+            )
+
         end
         
         if status_slave == :Infeasible
 
             println("\nThere is an  extreme ray, adding the corresponding constraint")
             # TODO: add cuts
-            #@constraint(model_master,0>=(muCurrent.*supply)'*x + sum(lambdaCurrent.*demand))
-        
+            @constraint(model_master, 0 >=
+
+                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                    + duals_upper_gen_limit[t,gr] * (-1) * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                for t=1:T for gr=1:N_ext_G)
+                + 
+                sum(  duals_lower_line_limit[l] * (-1) * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    + duals_upper_line_limit[l] * (-1) * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                for l=1:N_ext_LN)
+            
+            )
         end
+
+        println(model_master)
         
         iteration += 1
 

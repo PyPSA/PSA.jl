@@ -8,7 +8,7 @@ bigM = 1e12 # TODO: high enough?
 max_iterations = 10
 
 # run benders decomposition
-# TODO: neglects storage units, storages, and links at the moment!
+# TODO: neglects storage units, storages, and links (!) at the moment!
 function run_benders_lopf(network, solver)
 
     T = nrow(network.snapshots)
@@ -38,7 +38,7 @@ function run_benders_lopf(network, solver)
             
     iteration = 1
 
-    while(iteration <= max_iterations) # set termination condition later
+    while(iteration <= max_iterations)
         
         println("\n-----------------------")
         println("Iteration number = ", iteration)
@@ -74,7 +74,6 @@ function run_benders_lopf(network, solver)
         "\nalpha = ", getvalue(model_master[:ALPHA]))
      
         # adapt RHS of slave model with solution from master problem
-
         for t=1:T
 
             for gr=1:N_ext_G
@@ -103,9 +102,7 @@ function run_benders_lopf(network, solver)
 
         status_slave = solve(model_slave)
 
-        # TODO: check
         investment_cost = objective_master_current - getvalue(model_master[:ALPHA])
-
         objective_slave_current = investment_cost + getobjectivevalue(model_slave)
         duals_lower_gen_limit = getdual(model_slave[:lower_gen_limit])
         duals_upper_gen_limit = getdual(model_slave[:upper_gen_limit])
@@ -138,7 +135,7 @@ function run_benders_lopf(network, solver)
             objective_slave_current > objective_master_current)
 
             println("\nThere is a suboptimal vertex, add the corresponding constraint")
-            # TODO: add cuts
+            
             # TODO: unsure about sign
             @constraint(model_master, model_master[:ALPHA] >=
 
@@ -157,7 +154,8 @@ function run_benders_lopf(network, solver)
         if status_slave == :Infeasible
 
             println("\nThere is an  extreme ray, adding the corresponding constraint")
-            # TODO: add cuts
+            
+            # TODO: unsure about sign
             @constraint(model_master, 0 >=
 
                 sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]

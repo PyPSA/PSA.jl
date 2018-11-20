@@ -439,5 +439,9 @@ function line_extensions_candidates(network)
 end
 
 function getvariables(m::JuMP.Model)
-    return [k for (k,v) in m.objDict if issubtype(eltype(v), JuMP.Variable) && size(m[k])[1]!=0]
+    return [k for (k,v) in m.objDict 
+             if issubtype(eltype(v), JuMP.Variable) &&
+             k!= :ALPHA &&
+             size(m[k])[1]!=0
+           ]
 end

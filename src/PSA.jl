@@ -8,6 +8,7 @@ include("build_lopf.jl")
 include("build_block_lopf.jl")
 include("run_lopf.jl")
 include("run_iterative_lopf.jl")
+include("run_benders_lopf.jl")
 
 mutable struct network_mutable
     buses::DataFrame

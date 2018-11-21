@@ -3,14 +3,15 @@ using JuMP
 using MathProgBase
 
 # set parameters
-tolerance = 1e4 # TODO: adapt to needs
+tolerance = 1e-12 # TODO: adapt to needs
 bigM = 1e12 # TODO: high enough?
-max_iterations = 10
+max_iterations = 30
 
 # run benders decomposition
 # TODO: neglects storage units, storages, and links (!) at the moment!
 function run_benders_lopf(network, solver)
 
+    calculate_dependent_values!(network)
     T = nrow(network.snapshots)
     ext_gens_b = ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
     ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
@@ -25,27 +26,17 @@ function run_benders_lopf(network, solver)
         # TODO: add other components later
         ]
 
-    uncoupled_slave_constrs = setdiff(getconstraints(model_slave), coupled_slave_constrs)
         
     model_master = build_lopf(network, solver, benders="master")
     model_slave = build_lopf(network, solver, benders="slave")
-
-    #println(model_slave[:upper_gen_limit])
-    #solve(model_slave)
-    #println(getvalue(model_slave[:G_ext]))
-    #println(network.generators_t["p_max_pu"][:,[8,11]])
+        
+    uncoupled_slave_constrs = setdiff(getconstraints(model_slave), coupled_slave_constrs)
     
     vars_master = getvariables(model_master)
     vars_slave = getvariables(model_slave)
     
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
-    # println(p_max_pu(1,8))
-    # println(p_max_pu(2,8))
-    # println(p_max_pu(3,8))
-    # println(p_max_pu(1,11))
-    # println(p_max_pu(2,11))
-    # println(p_max_pu(3,11))
             
     iteration = 1
 
@@ -77,13 +68,6 @@ function run_benders_lopf(network, solver)
         else
             error("Odd status of master problem: $status_master")
         end
-
-        # TODO: starting solution? only necessary, when initial master infeasible
-        # if iteration == 1
-        #     objective_master_current = 0# bigM
-        #     G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
-        #     LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
-        # end
 
         println("Status of the master problem is ", status_master, 
         "\nwith objective_master_current = ", objective_master_current, 
@@ -127,13 +111,6 @@ function run_benders_lopf(network, solver)
         duals_lower_line_limit = getdual(model_slave[:lower_line_limit])
         duals_upper_line_limit = getdual(model_slave[:upper_line_limit])
 
-        # TODO: why do my duals not change?
-        println("---")
-        println(duals_upper_gen_limit)
-        println("---")
-        # println(duals_upper_line_limit)
-        # println("---")
-
         println("Status of the slaveproblem is ", status_slave, 
         "\nwith GAP ", objective_slave_current - objective_master_current,
         "\nobjective_slave_current = ", objective_slave_current, 
@@ -141,7 +118,8 @@ function run_benders_lopf(network, solver)
 
         # cases of slave problem
         if (status_slave == :Optimal && 
-            objective_slave_current - objective_master_current <= tolerance)
+            #objective_slave_current - objective_master_current <= tolerance)
+            objective_slave_current / objective_master_current <= 1 + tolerance)
 
             println("Optimal solution of the original problem found")
             println("The optimal objective value is ", objective_master_current)
@@ -163,6 +141,8 @@ function run_benders_lopf(network, solver)
                 sum(  duals_lower_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                     + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=1:T for l=1:N_ext_LN)
+
+                + get_benderscut_constant(model_slave,uncoupled_slave_constrs)
             
             )
 
@@ -181,15 +161,12 @@ function run_benders_lopf(network, solver)
                 sum(  duals_lower_line_limit[t,l] * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                     + duals_upper_line_limit[t,l] * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for l=1:N_ext_LN)
+
+                + get_benderscut_constant(model_slave,uncoupled_slave_constrs)
             
             )
         end
-
-        
-        println(model_master)
-        println(model_slave[:upper_gen_limit])
-        println(getvalue(model_slave[:G_ext]))
-        
+       
         iteration += 1
 
     end

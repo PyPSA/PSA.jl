@@ -1197,8 +1197,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     + ALPHA
                 )
 
-                @constraint(m, alpha, ALPHA >= 0)
-    
             elseif benders == "slave"
                 
                 @objective(m, Min,

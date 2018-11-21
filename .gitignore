@@ -3,3 +3,4 @@
 *.log
 
 vscode
+src/build_lopf_old.jl

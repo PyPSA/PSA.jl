@@ -17,24 +17,35 @@ function run_benders_lopf(network, solver)
     N_ext_G = sum(ext_gens_b)
     N_ext_LN = sum(ext_lines_b)
 
-    constraint_update_names = [
+    coupled_slave_constrs = [
         :lower_gen_limit,
         :upper_gen_limit,
         :lower_line_limit,
         :upper_line_limit
         # TODO: add other components later
         ]
+
+    uncoupled_slave_constrs = setdiff(getconstraints(model_slave), coupled_slave_constrs)
         
     model_master = build_lopf(network, solver, benders="master")
     model_slave = build_lopf(network, solver, benders="slave")
 
-    println(model_master)
-
+    #println(model_slave[:upper_gen_limit])
+    #solve(model_slave)
+    #println(getvalue(model_slave[:G_ext]))
+    #println(network.generators_t["p_max_pu"][:,[8,11]])
+    
     vars_master = getvariables(model_master)
     vars_slave = getvariables(model_slave)
-
+    
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
+    # println(p_max_pu(1,8))
+    # println(p_max_pu(2,8))
+    # println(p_max_pu(3,8))
+    # println(p_max_pu(1,11))
+    # println(p_max_pu(2,11))
+    # println(p_max_pu(3,11))
             
     iteration = 1
 
@@ -66,6 +77,13 @@ function run_benders_lopf(network, solver)
         else
             error("Odd status of master problem: $status_master")
         end
+
+        # TODO: starting solution? only necessary, when initial master infeasible
+        # if iteration == 1
+        #     objective_master_current = 0# bigM
+        #     G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
+        #     LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
+        # end
 
         println("Status of the master problem is ", status_master, 
         "\nwith objective_master_current = ", objective_master_current, 
@@ -113,8 +131,8 @@ function run_benders_lopf(network, solver)
         println("---")
         println(duals_upper_gen_limit)
         println("---")
-        println(duals_upper_line_limit)
-        println("---")
+        # println(duals_upper_line_limit)
+        # println("---")
 
         println("Status of the slaveproblem is ", status_slave, 
         "\nwith GAP ", objective_slave_current - objective_master_current,
@@ -136,15 +154,14 @@ function run_benders_lopf(network, solver)
 
             println("\nThere is a suboptimal vertex, add the corresponding constraint")
             
-            # TODO: unsure about sign
             @constraint(model_master, model_master[:ALPHA] >=
 
-                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                    + duals_upper_gen_limit[t,gr] * (-1) * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                sum(  duals_lower_gen_limit[t,gr] * (-1) * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                    + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
                 for t=1:T for gr=1:N_ext_G)
                 + 
-                sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    + duals_upper_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                sum(  duals_lower_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=1:T for l=1:N_ext_LN)
             
             )
@@ -155,21 +172,23 @@ function run_benders_lopf(network, solver)
 
             println("\nThere is an  extreme ray, adding the corresponding constraint")
             
-            # TODO: unsure about sign
             @constraint(model_master, 0 >=
 
-                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                    + duals_upper_gen_limit[t,gr] * (-1) * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                sum(  duals_lower_gen_limit[t,gr] * (-1) * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                    + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
                 for t=1:T for gr=1:N_ext_G)
                 + 
-                sum(  duals_lower_line_limit[l] * (-1) * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    + duals_upper_line_limit[l] * (-1) * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                sum(  duals_lower_line_limit[t,l] * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    + duals_upper_line_limit[t,l] * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for l=1:N_ext_LN)
             
             )
         end
 
+        
         println(model_master)
+        println(model_slave[:upper_gen_limit])
+        println(getvalue(model_slave[:G_ext]))
         
         iteration += 1
 

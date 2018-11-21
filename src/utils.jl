@@ -463,6 +463,14 @@ function getconstraints(m::JuMP.Model)
     return constraints
 end
 
-JuMP.rhs(constraint::ConstraintRef) = rhs(LinearConstraint(constraint))
+JuMP.rhs(constraint::ConstraintRef) = JuMP.rhs(LinearConstraint(constraint))
 
 JuMP.rhs(constraints::JuMP.JuMPArray{JuMP.ConstraintRef}) = JuMP.JuMPArray(JuMP.rhs.(constraints.innerArray), constraints.indexsets)
+
+function get_benderscut_constant(m::JuMP.Model, uncoupled_constraints::Array{Any,1})
+    constant = 0
+    for constr in uncoupled_constraints
+        constant += dot(getdual(m[constr])[:,:],JuMP.rhs(m[constr])[:,:])
+    end
+    return constant
+end

@@ -445,3 +445,24 @@ function getvariables(m::JuMP.Model)
              size(m[k])[1]!=0
            ]
 end
+
+function getconstraints(m::JuMP.Model)
+    objs = [k for (k,v) in m.objDict if issubtype(eltype(v), JuMP.ConstraintRef)]
+    constraints = []
+    for obj in objs
+        empty = false
+        try
+            m[obj][1,1]
+        catch
+            empty = true
+        end
+        if !empty
+            push!(constraints, obj)
+        end
+    end
+    return constraints
+end
+
+JuMP.rhs(constraint::ConstraintRef) = rhs(LinearConstraint(constraint))
+
+JuMP.rhs(constraints::JuMP.JuMPArray{JuMP.ConstraintRef}) = JuMP.JuMPArray(JuMP.rhs.(constraints.innerArray), constraints.indexsets)

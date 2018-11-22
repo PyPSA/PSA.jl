@@ -122,7 +122,6 @@ function run_benders_lopf(network, solver;
 
         # cases of slave problem
         if (status_slave == :Optimal && 
-            #objective_slave_current - objective_master_current <= tolerance)
             objective_slave_current / objective_master_current <= 1 + tolerance)
 
             println("Optimal solution of the original problem found")

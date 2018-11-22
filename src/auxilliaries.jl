@@ -32,6 +32,7 @@ end
 function set_snapshots!(n, snapshots)
     assert(typeof(snapshots) == Array{DateTime,1})
     first_sn, last_sn = snapshots[[1, end]]
+    n.snapshots = snapshots 
     for field=dynamic_components(n)
         for df_name=keys(getfield(n,field))
             if size(getfield(n,field)[df_name])[1]>0
@@ -39,7 +40,9 @@ function set_snapshots!(n, snapshots)
             end
         end
     end
-    n.snapshots = snapshots
+    if length(n.snapshot_weightings)>=0
+        n.snapshot_weightings = n.snapshot_weightings[first_sn .. last_sn]
+    end
 end
 
 
@@ -61,7 +64,7 @@ end
 
 function calculate_dependent_values!(n)
     function set_default(df, col, default)
-        !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1]),1), col) : df
+        !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1])), col) : df
     end
 
     # snapshot_weighting
@@ -206,19 +209,30 @@ zsum(array) = length(array)>0 ? sum(array) : 0.
 zdot(v1,v2) = length(v1)>0 ? dot(v1,v2) : 0.
 
 
-# Use this funtion to assign a new (set of) column(s) or row(s) with given values.
-function assign(df::AxisArray, values, index; axis=1)
+"""
+Use this funtion to assign a new column or row with given values.
+Add a new row with keywordargument axis=1, for column set axis=2.
+"""
+function assign(df::AxisArray, values, index; axis=2)
     # This could also be done with AxisArrays.merge which breaks however with type 
-    # Any.  
+    # Any. 
+    # check if index is already in manipulated axis of df
     in(typeof(index),[String, Symbol, DateTime]) ? index = [index] : nothing
-    if axis == 1
-        AxisArray([df.data values], 
-                    axes(df)[1], 
-                    Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
-    elseif axis==2
-        AxisArray([df.data; values'], 
-                    Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index)),  
-                    axes(df)[2])
+    if index[1] in df.axes[axis].val
+        df = deepcopy(df)
+        axis == 1 ? df[index ,:] .= values' : nothing
+        axis == 2 ? df[:, index] .= values : nothing
+        df
+    else
+        if axis==1
+            AxisArray([df.data; values'], 
+                      Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index)),  
+                      axes(df)[2])
+        elseif axis == 2
+            AxisArray([df.data values], 
+                        axes(df)[1], 
+                        Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
+        end
     end
 end
 
@@ -415,5 +429,31 @@ function get_cycles(n)
     g[:add_nodes_from](1:size(n.buses)[1])
     g[:add_edges_from]([(busidx[n.lines[l,"bus0"]], busidx[n.lines[l,"bus1"]]) for l=1:size(n.lines)[1]])
     networkx[:cycle_basis](g)
+end
+
+# ------ fix_p_nom for nuclear plants -------------------
+function set_nuclear_p_nom!(n)
+    fix_p_nom = fill(NaN, (length(n.snapshots), length(n.generators[:, "p_nom_extendable"])))
+    ext_gens_b = BitArray(n.generators[:, "p_nom_extendable"])
+
+    # add values 
+    for i in length(n.snapshots)
+        if Dates.year(n.snapshots[i]) >= 2020
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 261"] = 0
+        end
+        if Dates.year(n.snapshots[i]) >= 2022
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 429"] = 0
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 217"] = 0
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 294"] = 0
+        end
+        if Dates.year(n.snapshots[i]) >= 2023
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 317"] = 0
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 392"] = 0
+            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 257"] = 0
+        end
+    end
+    n.generators_t["p_nom_opt"] = (AxisArray(fix_p_nom, Axis{:time}(n.snapshots), 
+                                   Axis{:col}(n.generators.axes[1][ext_gens_b])))
+    # return n
 end
 

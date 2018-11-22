@@ -1058,13 +1058,13 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             
             carrier_index(carrier) = findin(generators[:carrier], carrier)
     
-            if benders != "master" && nt>1 
-                if nrow(network.global_constraints)>0 && in("primary_energy", network.global_constraints[:name])
+            if benders != "master" && sn==0
+                if nrow(network.global_constraints)>0 && in("co2_limit", network.global_constraints[:name])
                     co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
                     println("CO2_limit is $(co2_limit[1]) t")
                     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
                     @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
-                                G[carrier_index(nonnull_carriers),t]) for t=1:T)
+                                G[carrier_index(carrier),t]) for t=1:T)
                                 * select_names(network.carriers, [carrier])[:co2_emissions]
                                 for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
                 end
@@ -1084,7 +1084,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     
             # 7.3 specified percentage of renewable energy generation
             # sum of renewable generation =/>= percentage * sum of total generation
-            if benders != "master" && nt>1
+            if benders != "master" && sn==0
                 if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
                     restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
                     println("Target share of renewable energy is $(restarget[1]*100) %")
@@ -1106,42 +1106,53 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     println("Target share of renewable energy is $(fakerestarget[1]*100) %")
     
                     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
-    
+                    
                     ren_gens_b = [in(i,carrier_index(null_carriers)) ? true : false for i=1:size(generators)[1]]
                     fix_ren_gens_b = .!generators[:p_nom_extendable][ren_gens_b]
                     ext_ren_gens_b = .!fix_ren_gens_b
-    
+                    
                     ren_gens_b_orig = [in(i,findin(network.generators[:carrier], null_carriers)) ? true : false for i=1:size(network.generators)[1]]
                     fix_ren_gens_b_orig = .!network.generators[:p_nom_extendable][ren_gens_b_orig]
                     ext_ren_gens_b_orig = .!fix_ren_gens_b_orig
-    
+                    
                     fix_ren_gens = generators[fix_gens_b .& ren_gens_b,:]
                     ext_ren_gens = generators[ext_gens_b .& ren_gens_b,:]
-    
+                    
                     def_p_max_pu_ext = 8760.0*ext_ren_gens[:p_max_pu]
                     def_p_max_pu_fix = 8760.0*fix_ren_gens[:p_max_pu]
                     
-                    p_max_pu = network.generators_t["p_max_pu"][:,2:end]
-                    p_max_pu_fix = convert(Array,p_max_pu[:,fix_ren_gens_b_orig])
-                    p_max_pu_ext = convert(Array,p_max_pu[:,ext_ren_gens_b_orig])
+                    exist_fix_ren_gens = maximum(fix_ren_gens_b_orig)
+                    
+                    p_max_pu_full = network.generators_t["p_max_pu"][:,2:end]
+                    exist_fix_ren_gens ? p_max_pu_fix = convert(Array,p_max_pu_full[:,fix_ren_gens_b_orig]) : nothing
+                    p_max_pu_ext = convert(Array,p_max_pu_full[:,ext_ren_gens_b_orig])
     
-                    loc_fix = findin(fix_ren_gens[:name], string.(p_max_pu.colindex.names))
-                    loc_ext = findin(ext_ren_gens[:name], string.(p_max_pu.colindex.names))
+                    loc_fix = findin(fix_ren_gens[:name], string.(p_max_pu_full.colindex.names))
+                    loc_ext = findin(ext_ren_gens[:name], string.(p_max_pu_full.colindex.names))
     
                     loc_fix_b = [in(i,loc_fix) ? true : false for i=1:length(def_p_max_pu_fix)]
                     loc_ext_b = [in(i,loc_ext) ? true : false for i=1:length(def_p_max_pu_ext)]
                     
-                    sum_of_p_max_pu_fix = sum(network.snapshots[:weightings][t]*p_max_pu_fix[t,:] for t=1:T)
+                    exist_fix_ren_gens ? sum_of_p_max_pu_fix = sum(network.snapshots[:weightings][t]*p_max_pu_fix[t,:] for t=1:T)  : nothing
                     sum_of_p_max_pu_ext = sum(network.snapshots[:weightings][t]*p_max_pu_ext[t,:] for t=1:T)
     
+                    exist_fix_ren_gens ? def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix : nothing
                     def_p_max_pu_ext[loc_ext_b] .= sum_of_p_max_pu_ext
-                    def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix
     
-                    @constraint(m, fakerestarget,
-                        dot(def_p_max_pu_fix,fix_ren_gens[:p_nom]) +
-                        dot(def_p_max_pu_ext,G_p_nom)
-                        >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
-                    )
+                    if exist_fix_ren_gens
+                        @constraint(m, fakerestarget,
+                            dot(def_p_max_pu_fix,fix_ren_gens[:p_nom]) +
+                            dot(def_p_max_pu_ext,G_p_nom)
+                            >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
+                        )
+                        
+                    else
+                        @constraint(m, fakerestarget,
+                            dot(def_p_max_pu_ext,G_p_nom)
+                            >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
+                        )
+                        
+                    end
                 end
             end
         end

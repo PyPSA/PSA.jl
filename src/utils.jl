@@ -463,7 +463,9 @@ function getconstraints(m::JuMP.Model)
     return constraints
 end
 
-JuMP.rhs(constraint::ConstraintRef) = JuMP.rhs(LinearConstraint(constraint))
+JuMP.rhs(constraint::JuMP.ConstraintRef) = JuMP.rhs(LinearConstraint(constraint))
+
+JuMP.rhs(constraint::Array) = reshape([JuMP.rhs(constraint[1])],1,1) # special case for global constraints
 
 JuMP.rhs(constraints::JuMP.JuMPArray{JuMP.ConstraintRef}) = JuMP.JuMPArray(JuMP.rhs.(constraints.innerArray), constraints.indexsets)
 
@@ -473,4 +475,145 @@ function get_benderscut_constant(m::JuMP.Model, uncoupled_constraints::Array{Any
         constant += dot(getdual(m[constr])[:,:],JuMP.rhs(m[constr])[:,:])
     end
     return constant
+end
+
+function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
+
+    joint ? sm = m : nothing
+
+    # shortcuts
+    buses = network.buses
+    lines = network.lines
+    generators = network.generators
+    links = network.links
+    stores = network.stores
+    storage_units = network.storage_units
+
+    N = nrow(network.buses)
+    L = nrow(network.lines)
+    T = nrow(network.snapshots)
+
+    fix_gens_b = (.!generators[:p_nom_extendable])
+    ext_gens_b = .!fix_gens_b
+    fix_lines_b = (.!lines[:s_nom_extendable])
+    ext_lines_b = .!fix_lines_b
+    fix_links_b = .!links[:p_nom_extendable]
+    ext_links_b = .!fix_links_b
+    fix_sus_b = .!storage_units[:p_nom_extendable]
+    ext_sus_b = .!fix_sus_b
+    fix_stores_b = .!stores[:e_nom_extendable]
+    ext_stores_b = .!fix_stores_b
+
+    G = [sm[:G_fix]; sm[:G_ext]]
+    LN = [sm[:LN_fix]; sm[:LN_ext]]
+    LK = [sm[:LK_fix]; sm[:LK_ext]]
+    SU_dispatch = [sm[:SU_dispatch_fix]; sm[:SU_dispatch_ext]]
+    SU_store = [sm[:SU_store_fix]; sm[:SU_store_ext]]
+    SU_soc = [sm[:SU_soc_fix]; sm[:SU_soc_ext]]
+    SU_spill = [sm[:SU_spill_fix]; sm[:SU_spill_ext]]
+    ST_dispatch = [sm[:ST_dispatch_fix]; sm[:ST_dispatch_ext]]
+    ST_store = [sm[:ST_store_fix]; sm[:ST_store_ext]]
+    ST_soc = [sm[:ST_soc_fix]; sm[:ST_soc_ext]]
+    ST_spill = [sm[:ST_spill_fix], sm[:ST_spill_ext]]
+
+    lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
+    orig_gen_order = network.generators[:name]
+    generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
+    links = [links[fix_links_b,:]; links[ext_links_b,:]]
+    storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
+    stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
+
+    # tep costs
+    tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom]))
+    println("The cost of transmission network extensions are ",  tep_cost)
+
+    # write results
+    generators[:p_nom_opt] = deepcopy(generators[:p_nom])
+    fix_gens_b_reordered = (.!generators[:p_nom_extendable])
+    ext_gens_b_reordered = .!fix_gens_b_reordered
+    generators[ext_gens_b_reordered,:p_nom_opt] = getvalue(m[:G_p_nom])
+    network.generators = generators
+    network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
+    network.generators = select_names(network.generators, orig_gen_order)
+
+    orig_line_order = network.lines[:name]
+    network.lines = lines
+    lines[:s_nom_opt] = deepcopy(lines[:s_nom])
+    network.lines[ext_lines_b,:s_nom_opt] = getvalue(m[:LN_s_nom])
+    network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
+    network.lines = select_names(network.lines, orig_line_order)
+
+    if nrow(links)>0
+        orig_link_order = network.links[:name]
+        network.links = links
+        links[:p_nom_opt] = deepcopy(links[:p_nom])
+        network.links[ext_links_b,:p_nom_opt] = getvalue(m[:LK_p_nom])
+        network.links_t["p0"] = names!(DataFrame(transpose(getvalue(LK))), Symbol.(links[:name]))
+        network.links = select_names(network.links, orig_link_order)
+
+    end
+    if nrow(storage_units)>0
+        orig_sus_order = network.storage_units[:name]
+        network.storage_units = storage_units
+
+        storage_units[:p_nom_opt] = deepcopy(storage_units[:p_nom])
+        network.storage_units[ext_sus_b,:p_nom_opt] = getvalue(m[:SU_p_nom])
+        # network.storage_units_t["spill"] = spillage
+        # network.storage_units_t["spill"][:,spill_sus_b] = names!(DataFrame(transpose(getvalue(SU_spill))),
+        #                     names(spillage)[spill_sus_b])
+        network.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),
+                            Symbol.(storage_units[:name]))
+        network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(SU_dispatch .- SU_store))),
+                            Symbol.(storage_units[:name]))
+        network.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(getvalue(SU_soc))),
+                            Symbol.(storage_units[:name]))
+        network.storage_units = select_names(network.storage_units, orig_sus_order)
+    end
+
+    align_component_order!(network)
+
+    # print total system code
+    println("Reduce cost to $(m.objVal)")
+    println("Relation of transmission expansion cost to total system cost: $(tep_cost/m.objVal)")
+
+    # co2limit
+    generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
+    nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
+    carrier_index(carrier) = findin(generators[:carrier], carrier)
+
+    co2 =   sum(sum(dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
+        getvalue(G[carrier_index(nonnull_carriers),t])) for t=1:T)
+        * select_names(network.carriers, [carrier])[:co2_emissions]
+        for carrier in network.carriers[:name])
+
+    println("GHG emissions amount to $(co2[1]) t")
+    
+
+    # renewable energy target
+    null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
+    res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / 
+    sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
+
+    println("Renewable energy share is $(res*100) %")
+
+
+    # mwkm transmission limit
+    mwkm = dot(getvalue(m[:LN_s_nom]),lines[:length]) / dot(lines[:s_nom],lines[:length])
+
+    println("Transmission line volume is increased by factor $mwkm")
+
+    # curtailment
+    sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)
+    p_nom_opt = generators[:p_nom_opt][findin(generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))]
+    ren_gens_i = findin(network.generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))
+    ren_gens_b = [in(i,ren_gens_i) ? true : false for i=1:size(network.generators)[1]]
+    fix_ren_gens_b = .!network.generators[:p_nom_extendable][ren_gens_b]
+    p_max_pu = network.generators_t["p_max_pu"][:,2:end]
+    p_max_pu = [p_max_pu[:,fix_ren_gens_b] p_max_pu[:,.!fix_ren_gens_b]]
+    p_max_pu = convert(Array,p_max_pu)
+    sum_of_p_max_pu = sum(network.snapshots[:weightings][t]*p_max_pu[t,:] for t=1:T)
+    curtailment = 1 - ( sum(sum_of_dispatch) / dot(p_nom_opt,sum_of_p_max_pu) )
+
+    println("The curtailment amounts to $(curtailment*100) %")
+
 end

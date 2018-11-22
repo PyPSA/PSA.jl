@@ -1,15 +1,13 @@
 using JuMP
-#using CPLEX
 using MathProgBase
 
-# set parameters
-tolerance = 1e-12 # TODO: adapt to needs
-bigM = 1e12 # TODO: high enough?
-max_iterations = 30
-
-# run benders decomposition
 # TODO: neglects storage units, storages, and links (!) at the moment!
-function run_benders_lopf(network, solver)
+function run_benders_lopf(network, solver; 
+                            formulation::String = "angles_linear",
+                            investment_type::String = "continuous", 
+                            tolerance::Float64 = 1e-10,
+                            bigM::Float64 = 1e12,
+                            max_iterations::Int64 =  100)
 
     calculate_dependent_values!(network)
     T = nrow(network.snapshots)
@@ -25,10 +23,16 @@ function run_benders_lopf(network, solver)
         :upper_line_limit
         # TODO: add other components later
         ]
+    
+    model_master = build_lopf(network, solver,
+        benders="master",
+        investment_type=investment_type
+    )
 
-        
-    model_master = build_lopf(network, solver, benders="master")
-    model_slave = build_lopf(network, solver, benders="slave")
+    model_slave = build_lopf(network, solver, 
+        benders="slave",
+        formulation=formulation,
+    )
         
     uncoupled_slave_constrs = setdiff(getconstraints(model_slave), coupled_slave_constrs)
     
@@ -134,7 +138,7 @@ function run_benders_lopf(network, solver)
             
             @constraint(model_master, model_master[:ALPHA] >=
 
-                sum(  duals_lower_gen_limit[t,gr] * (-1) * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
                     + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
                 for t=1:T for gr=1:N_ext_G)
                 + 
@@ -154,13 +158,13 @@ function run_benders_lopf(network, solver)
             
             @constraint(model_master, 0 >=
 
-                sum(  duals_lower_gen_limit[t,gr] * (-1) * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
                     + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
                 for t=1:T for gr=1:N_ext_G)
                 + 
-                sum(  duals_lower_line_limit[t,l] * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    + duals_upper_line_limit[t,l] * lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                for l=1:N_ext_LN)
+                sum(  duals_lower_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                for t=1:T for l=1:N_ext_LN)
 
                 + get_benderscut_constant(model_slave,uncoupled_slave_constrs)
             
@@ -170,6 +174,9 @@ function run_benders_lopf(network, solver)
         iteration += 1
 
     end
-end
 
-# write results
+    write_optimalsolution(network, model_master; sm=model_slave, joint=false)
+
+    return (model_master, model_slave);
+
+end

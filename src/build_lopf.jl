@@ -1083,15 +1083,15 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             end
     
             # 7.3 specified percentage of renewable energy generation
-            # sum of renewable generation =/>= percentage * sum of total generation
+            # sum of renewable generation =/>= percentage * sum of total load
             if benders != "master" && sn==0
                 if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
                     restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
                     println("Target share of renewable energy is $(restarget[1]*100) %")
                     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
                     @constraint(m, restarget,
-                    sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
-                    >= restarget[1] * sum(sum(network.snapshots[:weightings][t]*G[:,t] for t=1:T))
+                        sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
+                        >= restarget[1] * sum(network.snapshots[:weightings][t]*sum(convert(Array,network.loads_t["p_set"][t,2:end])) for t=1:T)
                     )
                 end
             end

@@ -46,9 +46,9 @@ function run_benders_lopf(network, solver;
 
     while(iteration <= max_iterations)
         
-        # println("\n-----------------------")
+        println("\n-----------------------")
         println("Iteration number = ", iteration)
-        # println("-----------------------\n")
+        println("-----------------------\n")
         status_master = solve(model_master)
 
         # cases of master problem
@@ -77,11 +77,11 @@ function run_benders_lopf(network, solver;
             error("Odd status of master problem: $status_master")
         end
 
-        # println("Status of the master problem is ", status_master, 
-        # "\nwith objective_master_current = ", objective_master_current, 
-        # "\nG_p_nom_current = ", G_p_nom_current,
-        # "\nLN_s_nom_current = ", LN_s_nom_current,
-        # "\nalpha = ", getvalue(model_master[:ALPHA]))
+        println("Status of the master problem is ", status_master, 
+        "\nwith objective_master_current = ", objective_master_current, 
+        "\nG_p_nom_current = ", G_p_nom_current,
+        "\nLN_s_nom_current = ", LN_s_nom_current,
+        "\nalpha = ", getvalue(model_master[:ALPHA]))
      
         # adapt RHS of slave model with solution from master problem
         for t=1:T
@@ -123,10 +123,10 @@ function run_benders_lopf(network, solver;
         # println((duals_lower_line_limit))
         # println((duals_upper_line_limit))
 
-        # println("Status of the slaveproblem is ", status_slave, 
-        # "\nwith GAP ", objective_slave_current - objective_master_current,
-        # "\nobjective_slave_current = ", objective_slave_current, 
-        # "\nobjective_master_current = ", objective_master_current)
+        println("Status of the slaveproblem is ", status_slave, 
+        "\nwith GAP ", objective_slave_current - getvalue(model_master[:ALPHA]),
+        "\nobjective_slave_current = ", objective_slave_current, 
+        "\nALPHA = ", getvalue(model_master[:ALPHA]))
 
         # cases of slave problem
         if (status_slave == :Optimal && 

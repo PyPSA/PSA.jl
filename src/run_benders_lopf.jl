@@ -5,9 +5,9 @@ using MathProgBase
 function run_benders_lopf(network, solver; 
                             formulation::String = "angles_linear",
                             investment_type::String = "continuous", 
-                            tolerance::Float64 = 1e-10,
+                            tolerance::Float64 = 1e-1,
                             bigM::Float64 = 1e12,
-                            max_iterations::Int64 =  100)
+                            max_iterations::Int64 =  1000)
 
     calculate_dependent_values!(network)
     T = nrow(network.snapshots)
@@ -21,7 +21,7 @@ function run_benders_lopf(network, solver;
         :upper_gen_limit,
         :lower_line_limit,
         :upper_line_limit
-        # TODO: add other components later
+        # TODO: add links later
         ]
     
     model_master = build_lopf(network, solver,
@@ -46,18 +46,22 @@ function run_benders_lopf(network, solver;
 
     while(iteration <= max_iterations)
         
-        println("\n-----------------------")
+        # println("\n-----------------------")
         println("Iteration number = ", iteration)
-        println("-----------------------\n")
+        # println("-----------------------\n")
         status_master = solve(model_master)
 
         # cases of master problem
         if status_master == :Infeasible
 
-            println("The problem is infeasible.")
+            # println("The problem is infeasible.")
             break
 
         elseif status_master == :Unbounded
+
+            # objective_master_current = -bigM
+            # G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
+            # LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
 
             objective_master_current = bigM
             G_p_nom_current = network.generators[ext_gens_b,:][:p_nom_max]
@@ -73,11 +77,11 @@ function run_benders_lopf(network, solver;
             error("Odd status of master problem: $status_master")
         end
 
-        println("Status of the master problem is ", status_master, 
-        "\nwith objective_master_current = ", objective_master_current, 
-        "\nG_p_nom_current = ", G_p_nom_current,
-        "\nLN_s_nom_current = ", LN_s_nom_current,
-        "\nalpha = ", getvalue(model_master[:ALPHA]))
+        # println("Status of the master problem is ", status_master, 
+        # "\nwith objective_master_current = ", objective_master_current, 
+        # "\nG_p_nom_current = ", G_p_nom_current,
+        # "\nLN_s_nom_current = ", LN_s_nom_current,
+        # "\nalpha = ", getvalue(model_master[:ALPHA]))
      
         # adapt RHS of slave model with solution from master problem
         for t=1:T
@@ -108,32 +112,38 @@ function run_benders_lopf(network, solver;
 
         status_slave = solve(model_slave)
 
-        investment_cost = objective_master_current - getvalue(model_master[:ALPHA])
-        objective_slave_current = investment_cost + getobjectivevalue(model_slave)
+        objective_slave_current = getobjectivevalue(model_slave)
         duals_lower_gen_limit = getdual(model_slave[:lower_gen_limit])
         duals_upper_gen_limit = getdual(model_slave[:upper_gen_limit])
         duals_lower_line_limit = getdual(model_slave[:lower_line_limit])
         duals_upper_line_limit = getdual(model_slave[:upper_line_limit])
 
-        println("Status of the slaveproblem is ", status_slave, 
-        "\nwith GAP ", objective_slave_current - objective_master_current,
-        "\nobjective_slave_current = ", objective_slave_current, 
-        "\nobjective_master_current = ", objective_master_current)
+        # println((duals_lower_gen_limit))
+        # println((duals_upper_gen_limit))
+        # println((duals_lower_line_limit))
+        # println((duals_upper_line_limit))
+
+        # println("Status of the slaveproblem is ", status_slave, 
+        # "\nwith GAP ", objective_slave_current - objective_master_current,
+        # "\nobjective_slave_current = ", objective_slave_current, 
+        # "\nobjective_master_current = ", objective_master_current)
 
         # cases of slave problem
         if (status_slave == :Optimal && 
-            objective_slave_current / objective_master_current <= 1 + tolerance)
+            objective_slave_current - getvalue(model_master[:ALPHA]) <= tolerance)
 
-            println("Optimal solution of the original problem found")
-            println("The optimal objective value is ", objective_master_current)
+            objective_slave_current - getvalue(model_master[:ALPHA]) <= 0 ? println("something went wrong!") : nothing
+
+            # println("Optimal solution of the original problem found")
+            # println("The optimal objective value is ", objective_master_current)
             break
 
         end
         
         if (status_slave == :Optimal &&
-            objective_slave_current > objective_master_current)
+            objective_slave_current - getvalue(model_master[:ALPHA]) > tolerance)
 
-            println("\nThere is a suboptimal vertex, add the corresponding constraint")
+            # println("\nThere is a suboptimal vertex, add the corresponding constraint")
             
             @constraint(model_master, model_master[:ALPHA] >=
 
@@ -141,7 +151,7 @@ function run_benders_lopf(network, solver;
                     + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
                 for t=1:T for gr=1:N_ext_G)
                 + 
-                sum(  duals_lower_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                     + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=1:T for l=1:N_ext_LN)
 
@@ -153,7 +163,7 @@ function run_benders_lopf(network, solver;
         
         if status_slave == :Infeasible
 
-            println("\nThere is an  extreme ray, adding the corresponding constraint")
+            # println("\nThere is an  extreme ray, adding the corresponding constraint")
             
             @constraint(model_master, 0 >=
 
@@ -161,7 +171,7 @@ function run_benders_lopf(network, solver;
                     + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
                 for t=1:T for gr=1:N_ext_G)
                 + 
-                sum(  duals_lower_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                     + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=1:T for l=1:N_ext_LN)
 
@@ -169,6 +179,8 @@ function run_benders_lopf(network, solver;
             
             )
         end
+
+        #println(model_master)
        
         iteration += 1
 

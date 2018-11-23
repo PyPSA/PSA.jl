@@ -157,12 +157,11 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
                 setfield!(network,component,CSV.read("$folder/$component.csv"; truestring="True",
                                                     falsestring="False"))
             catch y
-                if (typeof(y)==Missings.MissingException) | (typeof(y) == BoundsError)
-                    setfield!(network,component,readtable("$folder/$component.csv"; truestrings=["True"],
-                                                    falsestrings=["False"]))
-
-                end
-            end
+               if (typeof(y)==Missings.MissingException) | (typeof(y) == BoundsError)
+                   setfield!(network,component,readtable("$folder/$component.csv"; truestrings=["True"],
+                                                   falsestrings=["False"]))
+               end
+           end
         end
         # convert any ints to floats
         df = getfield(network, component)

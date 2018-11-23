@@ -1063,8 +1063,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
                     println("CO2_limit is $(co2_limit[1]) t")
                     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
-                    @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(carrier) , :efficiency],
-                                G[carrier_index(carrier),t]) for t=1:T)
+                    @constraint(m, co2limit, sum(resc_factor*sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
+                                G[carrier_index(nonnull_carriers),t]) for t=1:T)
                                 * select_names(network.carriers, [carrier])[:co2_emissions]
                                 for carrier in network.carriers[:name]) .<=  resc_factor*co2_limit)
                 end

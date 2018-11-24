@@ -4,7 +4,8 @@ using MathProgBase
 # TODO: neglects storage units, storages, and links (!) at the moment!
 function run_benders_lopf(network, solver; 
                             formulation::String = "angles_linear",
-                            investment_type::String = "continuous", 
+                            investment_type::String = "continuous",
+                            update_x::Bool = false, 
                             tolerance::Float64 = 1e-1,
                             bigM::Float64 = 1e12,
                             max_iterations::Int64 =  1000)
@@ -115,6 +116,14 @@ function run_benders_lopf(network, solver;
                 )
             end
 
+        end
+
+        if update_x
+            network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
+            model_slave = build_lopf(network, solver, 
+                benders="slave",
+                formulation=formulation
+            )
         end
 
         status_slave = solve(model_slave);

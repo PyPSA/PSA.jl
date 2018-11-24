@@ -152,7 +152,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     end
 
     if benders == "master"
-        @variable(m, ALPHA)
+        @variable(m, ALPHA>=0)
     end
 
     count = 1
@@ -1058,6 +1058,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             
             carrier_index(carrier) = findin(generators[:carrier], carrier)
     
+            # TODO: needs fixing
             if benders != "master" && sn==0
                 if nrow(network.global_constraints)>0 && in("co2_limit", network.global_constraints[:name])
                     co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]

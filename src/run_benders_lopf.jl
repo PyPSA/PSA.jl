@@ -59,19 +59,23 @@ function run_benders_lopf(network, solver;
 
         elseif status_master == :Unbounded
 
-            # objective_master_current = -bigM
-            # G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
-            # LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
-
-            objective_master_current = bigM
-            G_p_nom_current = network.generators[ext_gens_b,:][:p_nom_max]
-            LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom_max]
+            objective_master_current = -bigM
+            G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
+            LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
+            
+            # objective_master_current = bigM
+            # G_p_nom_current = network.generators[ext_gens_b,:][:p_nom_max]
+            # LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom_max]
+            
+            investment_type=="integer" ? LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:])) : nothing
+            setvalue(model_master[:ALPHA], -bigM)
 
         elseif status_master == :Optimal
 
             objective_master_current = getobjectivevalue(model_master)
             G_p_nom_current = getvalue(model_master[:G_p_nom])
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
+            investment_type=="integer" ? LN_inv_current = getvalue(model_master[:LN_inv]) : nothing
 
         else
             error("Odd status of master problem: $status_master")
@@ -82,6 +86,7 @@ function run_benders_lopf(network, solver;
         "\nG_p_nom_current = ", G_p_nom_current,
         "\nLN_s_nom_current = ", LN_s_nom_current,
         "\nalpha = ", getvalue(model_master[:ALPHA]))
+        investment_type=="integer" ? @show(LN_inv_current) : nothing
      
         # adapt RHS of slave model with solution from master problem
         for t=1:T
@@ -118,11 +123,6 @@ function run_benders_lopf(network, solver;
         duals_lower_line_limit = getdual(model_slave[:lower_line_limit])
         duals_upper_line_limit = getdual(model_slave[:upper_line_limit])
 
-        # println((duals_lower_gen_limit))
-        # println((duals_upper_gen_limit))
-        # println((duals_lower_line_limit))
-        # println((duals_upper_line_limit))
-
         println("Status of the slaveproblem is ", status_slave, 
         "\nwith GAP ", objective_slave_current - getvalue(model_master[:ALPHA]),
         "\nobjective_slave_current = ", objective_slave_current, 
@@ -132,10 +132,8 @@ function run_benders_lopf(network, solver;
         if (status_slave == :Optimal && 
             objective_slave_current - getvalue(model_master[:ALPHA]) <= tolerance)
 
-            objective_slave_current - getvalue(model_master[:ALPHA]) <= 0 ? println("something went wrong!") : nothing
-
-            # println("Optimal solution of the original problem found")
-            # println("The optimal objective value is ", objective_master_current)
+            println("Optimal solution of the original problem found")
+            println("The optimal objective value is ", objective_master_current)
             break
 
         end
@@ -180,8 +178,6 @@ function run_benders_lopf(network, solver;
             )
         end
 
-        #println(model_master)
-       
         iteration += 1
 
     end

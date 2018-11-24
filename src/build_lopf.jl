@@ -1091,7 +1091,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
                     @constraint(m, restarget,
                         sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
-                        >= restarget[1] * sum(network.snapshots[:weightings][t]*sum(convert(Array,network.loads_t["p_set"][t,2:end])) for t=1:T)
+                        .>= restarget * sum(network.snapshots[:weightings][t]*sum(convert(Array,network.loads_t["p_set"][t,2:end])) for t=1:T)
                     )
                 end
             end

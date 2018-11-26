@@ -159,13 +159,18 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     counter = count
 
     # go through loop only once if full model is built
-    if !blockstructure
+    if !blockstructure && sn==0
         count = nt
         counter = Trange
         Trange = [Trange]
+    elseif !blockstructure && sn>0
+        count = nt
+        counter = Trange
     end
 
     for tcurr=Trange
+
+        println(tcurr)
 
         println("Start building model for snapshot $tcurr.")
 
@@ -188,7 +193,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
         
         if benders != "master"
-            if blockstructure  
+            if blockstructure || sn>0
                 @constraints(m, begin 
                     lower_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
                         G_fix[gr,count] <= p_nom[gr]*p_max_pu(t,gr) 
@@ -236,7 +241,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         elseif benders == "slave"
 
             
-            if blockstructure
+            if blockstructure || sn>0
                 @constraints(m, begin
                     lower_gen_limit[t=tcurr,gr=1:N_ext_G],
                         resc_factor*G_ext[gr,count] >= generators[ext_gens_b,:p_nom][gr]*resc_factor*p_min_pu(t,gr)
@@ -306,7 +311,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         elseif benders == "slave"
 
             
-            if blockstructure
+            if blockstructure || sn>0
                 @constraints(m, begin
     
                     upper_line_limit[t=tcurr,l=1:N_ext_LN], 
@@ -499,7 +504,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             end)
             
             
-            if blockstructure
+            if blockstructure || sn>0
                 @constraints(m, begin 
                     lower_bounds_SU_spill_fix[s=1:N_fix_SU,t=tcurr],
                         0 <=  SU_spill_fix[s,count]
@@ -636,7 +641,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             end)
             
             
-            if blockstructure 
+            if blockstructure || sn>0
                 @constraints(m, begin 
                     lower_bounds_ST_spill_fix[s=1:N_fix_ST,t=tcurr],
                         0 <=  ST_spill_fix[s,count]
@@ -752,30 +757,52 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 # load data in correct order
                 loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-                @constraint(m, voltages[t=counter,n=1:N],
+                if sn>0
+                    @constraint(m, voltages[t=counter,n=1:N],
+    
+                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), count])
+                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,count])
+                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,count])
+    
+                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,count])
+                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,count])
+    
+                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),count])
+                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),count]) 
+                    )
 
-                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                else
 
-                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    @constraint(m, voltages[t=counter,n=1:N],
+    
+                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    
+                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    
+                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                    )
+                end
 
-                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                        - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
-                )
                 
                 rescaling ? resc_factor = 1e-2 : nothing
 
-                @constraint(m, flows[t=counter,l=1:L], 
+                sn>0 ? cnt=count : cnt=counter
+
+                @constraint(m, flows[t=cnt,l=1:L], 
                     resc_factor*LN[l, t] == 
                     resc_factor*lines[:x_pu][l]^(-1) *     
                     ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
                 )
 
-                @constraint(m, slack[t=counter], THETA[1,t] == 0 )
+                @constraint(m, slack[t=cnt], THETA[1,t] == 0 )
 
             elseif formulation == "angles_linear_integer_bigm"
 

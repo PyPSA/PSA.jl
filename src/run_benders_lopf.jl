@@ -6,6 +6,7 @@ function run_benders_lopf(network, solver;
                             formulation::String = "angles_linear",
                             investment_type::String = "continuous",
                             update_x::Bool = false, 
+                            split::Bool = false,
                             tolerance::Float64 = 1e-1,
                             bigM::Float64 = 1e12,
                             max_iterations::Int64 =  1000)
@@ -30,22 +31,38 @@ function run_benders_lopf(network, solver;
         investment_type=investment_type
     )
 
-    model_slave = build_lopf(network, solver, 
-        benders="slave",
-        formulation=formulation,
-    )
+    models_slave = JuMP.Model[]
+    if !split
+        push!(models_slave, 
+            build_lopf(network, solver, 
+                benders="slave",
+                formulation=formulation,
+            )
+        )
+    else
+        for t=1:T
+            push!(models_slave, 
+                build_lopf(network, solver, 
+                    benders="slave",
+                    formulation=formulation,
+                    snapshot_number=t
+                )
+            )
+        end
+    end
+    N_sub = length(models_slave)
         
-    uncoupled_slave_constrs = setdiff(getconstraints(model_slave), coupled_slave_constrs)
+    uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
     vars_master = getvariables(model_master)
-    vars_slave = getvariables(model_slave)
+    vars_slave = getvariables(first(models_slave))
     
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
             
     iteration = 1
 
-    ubs = []
-    lbs = []
+    ubs = Float64[]
+    lbs = Float64[]
 
     println("\nITER\tGAP")
 
@@ -92,7 +109,10 @@ function run_benders_lopf(network, solver;
         # investment_type=="integer" ? @show(LN_inv_current) : nothing
      
         # adapt RHS of slave model with solution from master problem
+        model_slave = models_slave[1]
         for t=1:T
+
+            split ? model_slave = models_slave[t] : nothing
 
             for gr=1:N_ext_G
                 JuMP.setRHS(
@@ -118,21 +138,25 @@ function run_benders_lopf(network, solver;
 
         end
 
-        if update_x
-            network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
-            model_slave = build_lopf(network, solver, 
-                benders="slave",
-                formulation=formulation
-            )
+        # if update_x
+        #     network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
+        #     model_slave = build_lopf(network, solver, 
+        #         benders="slave",
+        #         formulation=formulation
+        #     )
+        # end
+
+        statuses_slave = Symbol[]
+        for i=1:N_sub
+            push!(statuses_slave, solve(models_slave[i])) 
         end
+        status_slave = minimum(statuses_slave)
 
-        status_slave = solve(model_slave);
-
-        objective_slave_current = getobjectivevalue(model_slave)
-        duals_lower_gen_limit = getdual(model_slave[:lower_gen_limit])
-        duals_upper_gen_limit = getdual(model_slave[:upper_gen_limit])
-        duals_lower_line_limit = getdual(model_slave[:lower_line_limit])
-        duals_upper_line_limit = getdual(model_slave[:upper_line_limit])
+        objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_sub)
+        duals_lower_gen_limit = getduals(models_slave, :lower_gen_limit)
+        duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
+        duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
+        duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
 
         # # for debugging
         # println("Status of the slaveproblem is ", status_slave, 
@@ -154,7 +178,6 @@ function run_benders_lopf(network, solver;
             objective_slave_current - getvalue(model_master[:ALPHA]) > tolerance)
 
             # println("\nThere is a suboptimal vertex, add the corresponding constraint")
-            
             @constraint(model_master, model_master[:ALPHA] >=
 
                 sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
@@ -165,7 +188,7 @@ function run_benders_lopf(network, solver;
                     + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=1:T for l=1:N_ext_LN)
 
-                + get_benderscut_constant(model_slave,uncoupled_slave_constrs)
+                + get_benderscut_constant(models_slave,uncoupled_slave_constrs)
             
             )
 
@@ -185,7 +208,7 @@ function run_benders_lopf(network, solver;
                     + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=1:T for l=1:N_ext_LN)
 
-                + get_benderscut_constant(model_slave,uncoupled_slave_constrs)
+                + get_benderscut_constant(models_slave,uncoupled_slave_constrs)
             
             )
         end
@@ -200,12 +223,13 @@ function run_benders_lopf(network, solver;
 
     if iteration <= max_iterations
         # converged
-        write_optimalsolution(network, model_master; sm=model_slave, joint=false)
+        # TODO: write function for models_slave array
+        !split ? write_optimalsolution(network, model_master; sm=first(models_slave), joint=false) : nothing
     else
         println("Hit the maximum number of iterations. No solution provided.\n
         Try choosing max_iterations>>$(max_iterations)!")
     end
 
-    return (model_master, model_slave, lbs, ubs);
+    return (model_master, models_slave, lbs, ubs);
 
 end

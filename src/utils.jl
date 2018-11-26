@@ -472,11 +472,26 @@ JuMP.rhs(constraints::JuMP.JuMPArray{JuMP.ConstraintRef}) = JuMP.JuMPArray(JuMP.
 function get_benderscut_constant(m::JuMP.Model, uncoupled_constraints::Array{Any,1})
     constant = 0
     for constr in uncoupled_constraints
-        constant += dot(getdual(m[constr])[:,:],JuMP.rhs(m[constr])[:,:])
+        try
+            constant += dot(getdual(m[constr])[:,:],JuMP.rhs(m[constr])[:,:])
+        catch
+            constant += dot(getdual(m[constr])[:],JuMP.rhs(m[constr])[:])
+        end
     end
     return constant
 end
 
+function get_benderscut_constant(m::Array{JuMP.Model,1}, uncoupled_constraints::Array{Any,1})
+    sum = 0
+    for i=1:length(m)
+        sum += get_benderscut_constant(m[i], uncoupled_constraints)
+    end
+    return sum
+end
+
+getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
+
+# TODO: adapt for models_slave array
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 
     joint ? sm = m : nothing

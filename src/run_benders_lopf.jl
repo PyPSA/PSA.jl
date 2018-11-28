@@ -253,7 +253,8 @@ function run_benders_lopf(network, solver;
     if iteration <= max_iterations
         # converged
         # TODO: write function for models_slave array
-        !split ? write_optimalsolution(network, model_master; sm=first(models_slave), joint=false) : nothing
+        #!split ? write_optimalsolution(network, model_master; sm=first(models_slave), joint=false) : nothing
+        write_optimalsolution(network, model_master; sm=models_slave, joint=false)
     else
         println("Hit the maximum number of iterations. No solution provided.\n
         Try choosing max_iterations>>$(max_iterations)!")

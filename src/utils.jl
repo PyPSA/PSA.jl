@@ -491,10 +491,13 @@ end
 
 getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
 
-# TODO: adapt for models_slave array
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 
     joint ? sm = m : nothing
+
+    if (typeof(sm) != Array{JuMP.Model,1})
+        sm = [sm]
+    end
 
     # shortcuts
     buses = network.buses
@@ -519,17 +522,17 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     fix_stores_b = .!stores[:e_nom_extendable]
     ext_stores_b = .!fix_stores_b
 
-    G = [sm[:G_fix]; sm[:G_ext]]
-    LN = [sm[:LN_fix]; sm[:LN_ext]]
-    LK = [sm[:LK_fix]; sm[:LK_ext]]
-    SU_dispatch = [sm[:SU_dispatch_fix]; sm[:SU_dispatch_ext]]
-    SU_store = [sm[:SU_store_fix]; sm[:SU_store_ext]]
-    SU_soc = [sm[:SU_soc_fix]; sm[:SU_soc_ext]]
-    SU_spill = [sm[:SU_spill_fix]; sm[:SU_spill_ext]]
-    ST_dispatch = [sm[:ST_dispatch_fix]; sm[:ST_dispatch_ext]]
-    ST_store = [sm[:ST_store_fix]; sm[:ST_store_ext]]
-    ST_soc = [sm[:ST_soc_fix]; sm[:ST_soc_ext]]
-    ST_spill = [sm[:ST_spill_fix], sm[:ST_spill_ext]]
+    G = [hcat(getindex.(sm, :G_fix)...); hcat(getindex.(sm, :G_ext)...)]
+    LN = [hcat(getindex.(sm, :LN_fix)...); hcat(getindex.(sm, :LN_ext)...)]
+    LK = [hcat(getindex.(sm, :LK_fix)...); hcat(getindex.(sm, :LK_ext)...)]
+    SU_dispatch = [hcat(getindex.(sm, :SU_dispatch_fix)...); hcat(getindex.(sm, :SU_dispatch_ext)...)]
+    SU_store = [hcat(getindex.(sm, :SU_store_fix)...); hcat(getindex.(sm, :SU_store_ext)...)]
+    SU_soc = [hcat(getindex.(sm, :SU_soc_fix)...); hcat(getindex.(sm, :SU_soc_ext)...)]
+    SU_spill = [hcat(getindex.(sm, :SU_spill_fix)...); hcat(getindex.(sm, :SU_spill_ext)...)]
+    ST_dispatch = [hcat(getindex.(sm, :ST_dispatch_fix)...); hcat(getindex.(sm, :ST_dispatch_ext)...)]
+    ST_store = [hcat(getindex.(sm, :ST_store_fix)...); hcat(getindex.(sm, :ST_store_ext)...)]
+    ST_soc = [hcat(getindex.(sm, :ST_soc_fix)...); hcat(getindex.(sm, :ST_soc_ext)...)]
+    ST_spill = [hcat(getindex.(sm, :ST_spill_fix)...); hcat(getindex.(sm, :ST_spill_ext)...)]
 
     lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
     orig_gen_order = network.generators[:name]

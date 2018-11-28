@@ -1131,7 +1131,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     
                     #println("Target share of renewable energy is $(fakerestarget[1]*100) %")
     
-                    null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
+                    # needed to take out biomass since it is not time dependent
+                    null_carriers = network.carriers[(network.carriers[:co2_emissions].==0) .& (network.carriers[:name] .!= "biomass"),:][:name]
                     
                     ren_gens_b = [in(i,carrier_index(null_carriers)) ? true : false for i=1:size(generators)[1]]
                     fix_ren_gens_b = .!generators[:p_nom_extendable][ren_gens_b]
@@ -1148,7 +1149,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     def_p_max_pu_fix = 8760.0*fix_ren_gens[:p_max_pu]
                     
                     exist_fix_ren_gens = maximum(fix_ren_gens_b_orig)
-                    
+
                     p_max_pu_full = network.generators_t["p_max_pu"][:,2:end]
                     exist_fix_ren_gens ? p_max_pu_fix = convert(Array,p_max_pu_full[:,fix_ren_gens_b_orig]) : nothing
                     p_max_pu_ext = convert(Array,p_max_pu_full[:,ext_ren_gens_b_orig])

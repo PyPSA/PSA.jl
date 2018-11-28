@@ -5,7 +5,7 @@ include("utils.jl")
 
 function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles_linear",
                     objective::String="total", investment_type::String="continuous",
-                    blockmodel::Bool=false, benders::String="", snapshot_number=0, blockstructure::Bool=false)
+                    blockmodel::Bool=false, benders::String="", snapshot_number=0, N_groups=1, blockstructure::Bool=false)
     
                     
     # This function is organized as the following:
@@ -27,7 +27,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     #   - Additional capital words - which are not variables - are N (number of buses),
     #     T (number of snapshots), L (number of lines) defining the number of considered variables added to the model.
     
-    println("Creating model.")
+    #println("Creating model.")
     
     # sanity checks
     snapshot_number>0 && benders!="slave" ? error("Can only specify one single snapshot for slave-subproblem!") : nothing
@@ -152,7 +152,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     end
 
     if benders == "master"
-        @variable(m, ALPHA>=0)
+        @variable(m, ALPHA[g=1:N_groups]>=0)
     end
 
     count = 1
@@ -170,12 +170,10 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     for tcurr=Trange
 
-        println(tcurr)
-
         println("Start building model for snapshot $tcurr.")
 
     # 1. add all generators to the model
-        println("Adding generators to the model.")
+        #println("Adding generators to the model.")
 
         # 1.1 set different generator types
         generators = network.generators
@@ -266,7 +264,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # --------------------------------------------------------------------------------------------------------
 
     # 2. add all lines to the model
-        println("Adding lines to the model.")
+        #println("Adding lines to the model.")
 
         # 2.1 set different lines types
         lines = network.lines
@@ -398,7 +396,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # --------------------------------------------------------------------------------------------------------
 
     # 3. add all links to the model
-        println("Adding links to the model.")
+        #println("Adding links to the model.")
 
         # 3.1 set different link types
         links = network.links
@@ -457,7 +455,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # TODO: not made for benders and individual snapshots yet!
 
     # 4. define storage_units
-        println("Adding storage units to the model.")
+        #println("Adding storage units to the model.")
 
         # 4.1 set different storage_units types
         storage_units = network.storage_units
@@ -594,7 +592,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # --------------------------------------------------------------------------------------------------------
 
     # 5. define stores
-        println("Adding stores to the model.")
+        #println("Adding stores to the model.")
 
         # 5.1 set different stores types
         stores = network.stores
@@ -747,7 +745,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     # 6. power flow formulations
 
-        println("Adding power flow formulation $formulation to the model.")
+        #println("Adding power flow formulation $formulation to the model.")
 
         if benders != "master"
 
@@ -1067,7 +1065,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 )
 
             else
-                println("The formulation $formulation is not implemented.")
+                #println("The formulation $formulation is not implemented.")
             end
         end
     
@@ -1079,7 +1077,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         # 7.1 carbon constraint
         if count==nt
 
-            println("Adding global CO2 constraints to the model.")
+            #println("Adding global CO2 constraints to the model.")
     
             rescaling ? resc_factor = 1e2 : nothing
             
@@ -1103,7 +1101,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             if benders != "slave"
                 if nrow(network.global_constraints)>0 && in("mwkm_limit", network.global_constraints[:name])
                     mwkm_limit = network.global_constraints[network.global_constraints[:name].=="mwkm_limit", :constant]
-                    println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
+                    #println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
                     @constraint(m, mwkmlimit, 
                         dot(LN_s_nom,lines[:length]) <= mwkm_limit[1] * dot(lines[:s_nom],lines[:length])
                     )
@@ -1115,7 +1113,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             if benders != "master" && sn==0
                 if nrow(network.global_constraints)>0 && in("restarget", network.global_constraints[:name])
                     restarget = network.global_constraints[network.global_constraints[:name].=="restarget", :constant]
-                    println("Target share of renewable energy is $(restarget[1]*100) %")
+                    #println("Target share of renewable energy is $(restarget[1]*100) %")
                     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
                     @constraint(m, restarget,
                         sum(sum(network.snapshots[:weightings][t]*G[carrier_index(null_carriers),t] for t=1:T))
@@ -1131,7 +1129,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     N_loads = size(network.loads_t["p_set"])[2]
                     fakerestarget = network.global_constraints[network.global_constraints[:name].=="fakerestarget", :constant]
     
-                    println("Target share of renewable energy is $(fakerestarget[1]*100) %")
+                    #println("Target share of renewable energy is $(fakerestarget[1]*100) %")
     
                     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
                     
@@ -1191,7 +1189,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # 8. set objective function
 
         if count==nt
-            println("Adding objective to the model.")
+            #println("Adding objective to the model.")
     
             if benders!="master" && benders!="slave"
     
@@ -1233,16 +1231,24 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                     + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
             
-                    + ALPHA
+                    + sum(ALPHA[g] for g=1:N_groups)
                 )
 
             elseif benders == "slave"
                 
-                @objective(m, Min,
-                            sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=1:Te)
-                        + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=1:Te)
-                        + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:Te)
-                )
+                if sn>0
+                    @objective(m, Min,
+                              sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,count]) for t=counter)
+                            + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,count]) for t=counter)
+                            + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,count]) for t=counter)
+                    )
+                else
+                    @objective(m, Min,
+                              sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], G[:,t]) for t=counter)
+                            + sum(network.snapshots[:weightings][t]*dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=counter)
+                            + sum(network.snapshots[:weightings][t]*dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=counter)
+                    )
+                end
     
             else
                 error()
@@ -1254,7 +1260,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     end # for loop
 
-    println("Finished building model.")
+    #println("Finished building model.")
 
     return m
 

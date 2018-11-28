@@ -7,6 +7,7 @@ function run_benders_lopf(network, solver;
                             investment_type::String = "continuous",
                             update_x::Bool = false, 
                             split::Bool = false,
+                            individualcuts::Bool = false,
                             tolerance::Float64 = 1e-1,
                             bigM::Float64 = 1e12,
                             max_iterations::Int64 =  1000)
@@ -17,6 +18,7 @@ function run_benders_lopf(network, solver;
     ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
     N_ext_G = sum(ext_gens_b)
     N_ext_LN = sum(ext_lines_b)
+    individualcuts ? N_groups = T : N_groups = 1
 
     coupled_slave_constrs = [
         :lower_gen_limit,
@@ -28,7 +30,8 @@ function run_benders_lopf(network, solver;
     
     model_master = build_lopf(network, solver,
         benders="master",
-        investment_type=investment_type
+        investment_type=investment_type,
+        N_groups=N_groups
     )
 
     models_slave = JuMP.Model[]
@@ -151,6 +154,16 @@ function run_benders_lopf(network, solver;
             push!(statuses_slave, solve(models_slave[i])) 
         end
         status_slave = minimum(statuses_slave)
+        
+        # # for debugging
+        # if iteration == 1
+        #     for i=1:length(models_slave)
+        #         println(models_slave[i])
+        #         @show(getvalue(models_slave[i][:G_ext]))
+        #         @show(getvalue(models_slave[i][:G_fix]))
+        #         @show(getobjectivevalue(models_slave[i]))
+        #     end
+        # end
 
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_sub)
         duals_lower_gen_limit = getduals(models_slave, :lower_gen_limit)
@@ -164,58 +177,74 @@ function run_benders_lopf(network, solver;
         # "\nobjective_slave_current = ", objective_slave_current, 
         # "\nALPHA = ", getvalue(model_master[:ALPHA]))
 
+        ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_groups)
+
         # cases of slave problem
         if (status_slave == :Optimal && 
-            objective_slave_current - getvalue(model_master[:ALPHA]) <= tolerance)
+            objective_slave_current - ALPHA_current <= tolerance)
 
             println("Optimal solution of the original problem found")
             println("The optimal objective value is ", objective_master_current)
             break
 
         end
-        
-        if (status_slave == :Optimal &&
-            objective_slave_current - getvalue(model_master[:ALPHA]) > tolerance)
 
-            # println("\nThere is a suboptimal vertex, add the corresponding constraint")
-            @constraint(model_master, model_master[:ALPHA] >=
-
-                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                    + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                for t=1:T for gr=1:N_ext_G)
-                + 
-                sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                for t=1:T for l=1:N_ext_LN)
-
-                + get_benderscut_constant(models_slave,uncoupled_slave_constrs)
-            
-            )
-
-        end
-        
-        if status_slave == :Infeasible
-
-            # println("\nThere is an  extreme ray, adding the corresponding constraint")
-            
-            @constraint(model_master, 0 >=
-
-                sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                    + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                for t=1:T for gr=1:N_ext_G)
-                + 
-                sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                for t=1:T for l=1:N_ext_LN)
-
-                + get_benderscut_constant(models_slave,uncoupled_slave_constrs)
-            
-            )
+        if !individualcuts
+            Trange = [1:T] 
+        else 
+            Trange = 1:T
         end
 
-        push!(lbs, getvalue(model_master[:ALPHA]))
+        for Tr = Trange
+
+            N_sub == 1 ? cnt = 1 : cnt = Tr
+            individualcuts ? cntr = Tr : cntr = 1
+
+            if (status_slave == :Optimal &&
+                objective_slave_current - ALPHA_current > tolerance)
+
+                # # for debugging
+                # @show(get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs))
+    
+                # println("\nThere is a suboptimal vertex, add the corresponding constraint")
+                @constraint(model_master, model_master[:ALPHA][cntr] >=
+                
+                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                    for t=Tr for gr=1:N_ext_G)
+                    + 
+                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    for t=Tr for l=1:N_ext_LN)
+    
+                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                
+                )
+            end
+            
+            if status_slave == :Infeasible
+    
+                # println("\nThere is an  extreme ray, adding the corresponding constraint")
+                
+                @constraint(model_master, 0 >=
+    
+                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                    for t=Tr for gr=1:N_ext_G)
+                    + 
+                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    for t=Tr for l=1:N_ext_LN)
+    
+                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                )
+            end
+            
+        end
+
+        push!(lbs, ALPHA_current)
         push!(ubs, objective_slave_current)
-        println("$iteration\t$(objective_slave_current - getvalue(model_master[:ALPHA]))")
+        println("$iteration\t$(objective_slave_current - ALPHA_current)")
 
         iteration += 1
 

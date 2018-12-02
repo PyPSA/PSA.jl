@@ -25,7 +25,7 @@ function run_benders_lopf(network, solver;
         :upper_gen_limit,
         :lower_line_limit,
         :upper_line_limit
-        # TODO: add links later
+        # TODO: add links
         ]
     
     model_master = build_lopf(network, solver,

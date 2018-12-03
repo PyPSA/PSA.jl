@@ -6,6 +6,8 @@ using AxisArrays
 const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
+# include("compat.jl")
+
 """
 this function return all dynamic components of the network
 """

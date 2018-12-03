@@ -30,18 +30,19 @@ end
 
 
 function set_snapshots!(n, snapshots)
-    assert(typeof(snapshots) == Array{DateTime,1})
-    first_sn, last_sn = snapshots[[1, end]]
+    assert(in(typeof(snapshots), [Array{DateTime,1}, Array{Union{DateTime, Missings.Missing},1}]))
+
+    snapshots = DateTime.(snapshots)
     n.snapshots = snapshots 
     for field=dynamic_components(n)
         for df_name=keys(getfield(n,field))
             if size(getfield(n,field)[df_name])[1]>0
-                getfield(n,field)[df_name] = getfield(n,field)[df_name][first_sn .. last_sn, :]
+                getfield(n,field)[df_name] = getfield(n,field)[df_name][snapshots, :]
             end
         end
     end
     if length(n.snapshot_weightings)>=0
-        n.snapshot_weightings = n.snapshot_weightings[first_sn .. last_sn]
+        n.snapshot_weightings = n.snapshot_weightings[snapshots]
     end
 end
 
@@ -62,7 +63,7 @@ function align_component_order!(n)
 end
 
 
-function calculate_dependent_values!(n)
+function calculate_dependent_values!(n, f_o="1")
     function set_default(df, col, default)
         !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1])), col) : df
     end
@@ -141,6 +142,23 @@ function calculate_dependent_values!(n)
         end
     end
     align_component_order!(n)
+
+    # costs, minimize objective range by factor f_o 
+    f_o = float(f_o)
+    n.generators[:, "maintenance_cost"] .= n.generators[:, "maintenance_cost"]/f_o
+    n.generators[:, "marginal_cost"] .= n.generators[:, "marginal_cost"]/f_o
+    n.generators[:, "capital_cost"] .= n.generators[:, "capital_cost"]/f_o
+    n.links[:, "capital_cost"] .= n.links[:, "capital_cost"]/f_o
+    n.lines[:, "capital_cost"] .= n.lines[:, "capital_cost"]/f_o
+
+    # check for infinity and replace for not having trouble in the lopf
+    g_inf = n.generators[:, :] .== Inf
+    n.generators[g_inf] = 1e8
+    lin_inf = n.lines[:,:] .== Inf
+    n.lines[lin_inf] = 1e5
+    link_inf = n.links[:,:] .== Inf
+    n.links[link_inf] = 1e5
+
 end
 
 
@@ -436,8 +454,10 @@ function set_nuclear_p_nom!(n)
     fix_p_nom = fill(NaN, (length(n.snapshots), length(n.generators[:, "p_nom_extendable"])))
     ext_gens_b = BitArray(n.generators[:, "p_nom_extendable"])
 
+    n.generators_t["p_nom_opt"] = (AxisArray(fix_p_nom, Axis{:time}(n.snapshots), 
+                                   Axis{:col}(n.generators.axes[1][ext_gens_b])))
     # add values 
-    for i in length(n.snapshots)
+    for i in 1:length(n.snapshots)
         if Dates.year(n.snapshots[i]) >= 2020
             n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 261"] = 0
         end
@@ -452,8 +472,5 @@ function set_nuclear_p_nom!(n)
             n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 257"] = 0
         end
     end
-    n.generators_t["p_nom_opt"] = (AxisArray(fix_p_nom, Axis{:time}(n.snapshots), 
-                                   Axis{:col}(n.generators.axes[1][ext_gens_b])))
     # return n
 end
-

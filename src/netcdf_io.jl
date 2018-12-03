@@ -1,6 +1,6 @@
 
 using AxisArrays, NCDatasets, NetCDF
-include("/home/fabian/vres/jl/PSA/src/auxilliaries.jl")
+include("/home/vres/data/lisa/jl/PSA.jl/src/auxilliaries.jl")
 
 function char_to_string(data)
     # data = copy(data)
@@ -54,6 +54,7 @@ function import_from_netcdf(path)
                 timeattr = split(ncgetatt(path, comp, "units"), " ")
                 sns = DateTime(timeattr[3])+Dates.Hour.(ncread(path, comp))
                 weightings = ncread(path, "snapshots_weightings")
+                @show(weightings)
                 setfield!(n, Symbol(comp),
                         AxisArray(  [sns weightings],
                         Axis{:index}(1:length(sns)), Axis{:properties}([comp, "weightings"]) ))             
@@ -194,11 +195,13 @@ function axNetwork(
             ]),
     lines_t=Dict{String,AxisArray}([("q0",AxisArray([])), ("q1", AxisArray([])),
             ("p0",AxisArray([])), ("p1", AxisArray([])),
-            ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([]))]),
+            ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
+            ("s_nom_opt", AxisArray([]))]),
     links_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
             ("p0",AxisArray([])), ("p1", AxisArray([])),
             ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-            ("efficiency",AxisArray([])), ("p_set", AxisArray([]))]),
+            ("efficiency",AxisArray([])), ("p_set", AxisArray([])),
+            ("p_nom_opt", AxisArray([]))]),
 
     storage_units_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
         ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),

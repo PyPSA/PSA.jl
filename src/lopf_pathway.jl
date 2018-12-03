@@ -47,7 +47,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     #t_ip = index of snapshot, when you invest, IP number of investments
     t_ip, IP = get_investment_periods(n, investment_period)
     info("Solve network with $IP investment timesteps.")
-    total_capacity_line_ext = 1000000
+    total_capacity_line_ext = 1e9
     info("The total capacity of the extendable lines in all investment periods is $total_capacity_line_ext .")
     size(n.loads_t["p"])[1]!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
 
@@ -70,7 +70,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 
     p_max_pu = get_switchable_as_dense(n, "generators", "p_max_pu") # matrix snapshot x generator["p_max_pu"]
     p_min_pu = get_switchable_as_dense(n, "generators", "p_min_pu")
-        
+
     p_nom = float.(n.generators[:, "p_nom"]) # Array{Any,1} formatted to Array{Float64,1}
 
     Ub_fix = p_max_pu[:,fix_gens_b] .* p_nom[fix_gens_b]'
@@ -80,6 +80,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     Lb_com = p_min_pu[:,com_gens_b] .* p_nom[com_gens_b]'
 
     Ub_ext_nom = n.generators[ext_gens_b, "p_nom_max"] # Array(number generators x 1)  p_nom_max
+    # @show((p_max_pu[1,ext_gens_b].*p_nom[ext_gens_b]) -. (p_min_pu[1,ext_gens_b].*p_nom[ext_gens_b]))
     Lb_ext_nom = n.generators[ext_gens_b, "p_nom_min"]
 
     # 1.3 add generator variables to the model
@@ -103,8 +104,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     
     # investment_period
     G_p_nom[1,:] = p_nom[ext_gens_b]
-    G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:]
-    # investment_period == nothing ? G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:] : nothing
+    # G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:]
+    investment_period == nothing ? G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:] : nothing
     for t=2:T
         if t ∈ t_ip          
             ip = findin(t_ip,t)[1]
@@ -125,7 +126,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
         p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
         values = n.generators_t["p_nom_opt"][p_nom_set]
         index = findn(p_nom_set)
-        @show index, values
         for (t,gr, v) in zip(index...,values)
             @constraint(m,G_p_nom[t, gr] == v)
         end
@@ -160,8 +160,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 # 2. add all lines to the model
     # 2.1 set different lines types
     lines = n.lines
-    # fix_lines_b = BitArray(.!lines[:, "s_nom_extendable"])
-    # ext_lines_b = .!fix_lines_b
     ext_lines_b = BitArray(lines[:, "s_nom_extendable"])
     fix_lines_b = .!ext_lines_b
 
@@ -192,8 +190,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     
     # investment_period
     LN_s_nom[1,:] = s_nom[ext_lines_b]
-    LN_s_nom[1,:] += LN_s_nom_ext[1,:]
-    # investment_period == nothing ? LN_s_nom[1,:] += LN_s_nom_ext[1,:] : nothing
+    # LN_s_nom[1,:] += LN_s_nom_ext[1,:]
+    investment_period == nothing ? LN_s_nom[1,:] += LN_s_nom_ext[1,:] : nothing
     for t=2:T
         if t ∈ t_ip        
             ip = findin(t_ip,t)[1] 
@@ -291,8 +289,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 
     # investment period
     LK_p_nom[1,:] = p_nom[ext_links_b]
-    LK_p_nom[1,:] += LK_p_nom_ext[1, :]
-    #investment_period == nothing? LK_p_nom[1,:] += LK_p_nom_ext[1, :] : nothing
+    #LK_p_nom[1,:] += LK_p_nom_ext[1, :]
+    investment_period == nothing? LK_p_nom[1,:] += LK_p_nom_ext[1, :] : nothing
     for t=2:T
         if t ∈ t_ip        
             ip = findin(t_ip,t)[1] 
@@ -593,6 +591,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 
 # --------------------------------------------------------------------------------------------------------
 # muss noch umgeschrieben werden, maintenance_cost für alle Generatoren, nicht nur extenable
+# maintenance_cost = fix costs per hour
+# marginal_cost = variable cost per hour
 # 10. set objective function
 
     @objective(m, Min,

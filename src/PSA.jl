@@ -139,7 +139,8 @@ function Network(
     links_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
             ("p0",AxisArray([])), ("p1", AxisArray([])),
             ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-            ("efficiency",AxisArray([])), ("p_set", AxisArray([]))]),
+            ("efficiency",AxisArray([])), ("p_set", AxisArray([]))
+            ,("p_nom_opt", AxisArray([]))]),
 
     storage_units_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
         ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
@@ -182,22 +183,27 @@ function import_nc(path)
     n = Network()
     ds = Dataset(path, )
     ds_keys = keys(ds) 
-    components = static_components(n)
+    components = static_components(n) 
+    push!(components, "snapshots_weightings")
     found = ""
     for comp = string.(components)
         if any(contains.(ds_keys, comp))
             found = found * "$comp, "
             if comp == "snapshots"
-                if ds[comp].attrib["calendar"] == "proleptic_gregorian"
-                    # proleptic_gregorian calendar has the same dates as gregorian for 
-                    # concerning years 
-                    data = NCDatasets.timedecode(1:size(ds["snapshots"])[1], 
-                            ds["snapshots"].attrib["units"])   
-                else
-                    data = ds["snapshots"][:]    
-                end    
+                data = ds["snapshots"][:]   
+                # if ds[comp].attrib["calendar"] == "proleptic_gregorian"
+                #     # proleptic_gregorian calendar has the same dates as gregorian for 
+                #     # concerning years 
+                #     data = NCDatasets.timedecode(1:size(ds["snapshots"])[1], 
+                #             ds["snapshots"].attrib["units"])   
+                # else
+                #     data = ds["snapshots"][:]    
+                # end    
                 setfield!(n, Symbol(comp), Array(data))
-
+            elseif comp == "snapshots_weightings"
+                data = ds["snapshots_weightings"][:]
+                setfield!(n, Symbol("snapshot_weightings"),
+                AxisArray(data, Axis{:time}(ds["snapshots"][:])))
             else
                 index = reformat(ds[comp * "_i"][:])
                 props = ds_keys[find(contains.(ds_keys,   Regex("$(comp)_(?!(i\$|t_))"))) ]
@@ -249,7 +255,7 @@ function export_nc(n, path)
     found = ""
     for comp = static_components(n)
         data = getfield(n, comp)
-        comp = String(comp) 
+        comp = String(comp)
         if length(data)  > 0 
             found = found * "$comp, "
             if comp == "snapshots"
@@ -260,6 +266,8 @@ function export_nc(n, path)
                 sn.attrib["units"] = "hours since $(data[1])"
                 sn.attrib["calendar"] = "gregorian"
                 sn[:] = 1:length(data)
+            elseif comp == "snapshots_weightings"
+                continue
             else
                 # Dimension
                 rows = data.axes[1].val
@@ -274,7 +282,8 @@ function export_nc(n, path)
                     vartype = catch_type(data[:,col])
                     var = defVar(ds, "$(comp)_$col", vartype, ("$(comp)_i",))
                     vartype == Int8 ? var.attrib["dtype"] = "bool" : nothing 
-                    var[:] = data[:, col].data
+                    vartype != String? var[:] = collect(Missings.replace(data[:, col].data, NaN )) : nothing
+                    vartype == String? var[:] = data[:, col].data : nothing
                     var.attrib["FillValue"] = NaN
                 end
             end
@@ -300,11 +309,11 @@ function export_nc(n, path)
                 index[:] = cols
                 var = defVar(ds, "$(comp)_$attr", Float64, 
                         ("$(comp)_$(attr)_i","snapshots",  ))
-                var[:,:] = data.data
+                var[:,:] = (data.data)'
             end
         end
     end
-    ds.attrib["_NCProperties"] = "..."
+    #ds.attrib["_NCProperties"] = "..."
     ds.attrib["network_srid"] = ""
     ds.attrib["network_pypsa_version"] = "0.13.1"
     ds.attrib["network_name"] = n.name

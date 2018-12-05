@@ -6,7 +6,7 @@ using AxisArrays
 const networkx = PyNULL()
 copy!(networkx, pyimport("networkx" ))
 
-# include("compat.jl")
+include("axis_utils.jl"); include("graph.jl") 
 
 """
 this function return all dynamic components of the network
@@ -146,20 +146,20 @@ function calculate_dependent_values!(n, f_o="1")
     align_component_order!(n)
 
     # costs, minimize objective range by factor f_o 
-    f_o = float(f_o)
-    n.generators[:, "maintenance_cost"] .= n.generators[:, "maintenance_cost"]/f_o
-    n.generators[:, "marginal_cost"] .= n.generators[:, "marginal_cost"]/f_o
-    n.generators[:, "capital_cost"] .= n.generators[:, "capital_cost"]/f_o
-    n.links[:, "capital_cost"] .= n.links[:, "capital_cost"]/f_o
-    n.lines[:, "capital_cost"] .= n.lines[:, "capital_cost"]/f_o
+    # f_o = float(f_o)
+    # n.generators[:, "maintenance_cost"] .= n.generators[:, "maintenance_cost"]/f_o
+    # n.generators[:, "marginal_cost"] .= n.generators[:, "marginal_cost"]/f_o
+    # n.generators[:, "capital_cost"] .= n.generators[:, "capital_cost"]/f_o
+    # n.links[:, "capital_cost"] .= n.links[:, "capital_cost"]/f_o
+    # n.lines[:, "capital_cost"] .= n.lines[:, "capital_cost"]/f_o
 
     # check for infinity and replace for not having trouble in the lopf
-    g_inf = n.generators[:, :] .== Inf
-    n.generators[g_inf] = 1e8
-    lin_inf = n.lines[:,:] .== Inf
-    n.lines[lin_inf] = 1e5
-    link_inf = n.links[:,:] .== Inf
-    n.links[link_inf] = 1e5
+    g_inf = n.generators[:, "p_nom_max"] .== Inf
+    n.generators[g_inf, "p_nom_max"] = 1e9
+    lin_inf = n.lines[:, "s_nom_max"] .== Inf
+    n.lines[lin_inf, "s_nom_max"] = 1e9
+    link_inf = n.links[:, "p_nom_max"] .== Inf
+    n.links[link_inf, "p_nom_max"] = 1e9
 
 end
 
@@ -199,280 +199,61 @@ function make_fallback_getter(df, def=1)
     (t,x)->in(x, names(df)) ? df[t, x] : def
 end
 
-function get_investment_periods(n, investment_period)
-    # for investment_period
-    start = n.snapshots[1]
-    stop = n.snapshots[length(n.snapshots)]
-    periods = Dict("h" => Base.Dates.Hour(1), "d" => Base.Dates.Day(1),
-                   "w" => Base.Dates.Week(1), "m" => Base.Dates.Month(1),
-                   "y" => Base.Dates.Year(1))
 
-    if investment_period in keys(periods)
+"""
+Get investment periods for infrastructure investments. Defaults to one
+investment point at start of timeseries (normal lopf). If an investment period 
+is given, one can decide to activate the first snapshot as an investment point 
+or not. 
+"""
+function get_investment_periods(n, investment_period=nothing, 
+                                invest_at_first_sn=false)
+
+start = n.snapshots[1]
+stop = n.snapshots[length(n.snapshots)]
+periods = Dict("h" => Base.Dates.Hour(1), "d" => Base.Dates.Day(1),
+"w" => Base.Dates.Week(1), "m" => Base.Dates.Month(1),
+"y" => Base.Dates.Year(1))
+
+    if isa(investment_period, Array)
+        t = investment_period
+    elseif investment_period in keys(periods)
         t = start:periods[investment_period]:stop
     else
         t = n.snapshots[1]:n.snapshots[1]
         investment_period == nothing ? nothing : warn("Not valid argument for investment period, falling back to first snapshot")
     end
     # array{DateTime,1} with snapshots when you invest + number of invesment times
-    collect(t)
-    findin(n.snapshots, t), length(t) 
+    t = collect(t)
+    if (length(t) > 1) & (invest_at_first_sn == false)
+        t_ip = findin(n.snapshots, t)[2:end] 
+        IP = length(t)-1    
+    else
+        t_ip = findin(n.snapshots, t) 
+        IP = length(t) 
+    end
+    @assert length(t_ip) == IP 
+    t_ip, IP
 end
 
 
-# -------------------------------------------------------------------------------------------------
-# AxisArray functions
-
-idx(dataframe) = Dict(zip(dataframe.axes[1].val, Iterators.countfrom(1)))
-rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe.axes[1].val))
-
-zsum(array) = length(array)>0 ? sum(array) : 0.
-zdot(v1,v2) = length(v1)>0 ? dot(v1,v2) : 0.
-
-
-"""
-Use this funtion to assign a new column or row with given values.
-Add a new row with keywordargument axis=1, for column set axis=2.
-"""
-function assign(df::AxisArray, values, index; axis=2)
-    # This could also be done with AxisArrays.merge which breaks however with type 
-    # Any. 
-    # check if index is already in manipulated axis of df
-    in(typeof(index),[String, Symbol, DateTime]) ? index = [index] : nothing
-    if index[1] in df.axes[axis].val
-        df = deepcopy(df)
-        axis == 1 ? df[index ,:] .= values' : nothing
-        axis == 2 ? df[:, index] .= values : nothing
-        df
+function aggregate_investments!(expr, start, var, t_ip)
+    #set first snapshot
+    if 1 ∈ t_ip
+        expr[1,:] = start + var[1, :]
     else
-        if axis==1
-            AxisArray([df.data; values'], 
-                      Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index)),  
-                      axes(df)[2])
-        elseif axis == 2
-            AxisArray([df.data values], 
-                        axes(df)[1], 
-                        Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
-        end
-    end
-end
-
-# might be a better way
-# function assign(df::AxisArray, values, index; axis=2)
-#     # This could also be done with AxisArrays.merge which breaks however with type 
-#     # Any.  
-#     in(typeof(index),[String, Symbol, DateTime]) ? index = [index] : nothing
-#     axname = axisnames(df)
-#     if axis == 1
-#         values = AxisArray(values, Axis{axname[1]}(index), df.axes[2])
-#     elseif axis==2
-#         values = AxisArray(values, df.axes[1], Axis{axname[2]}(index))
-#     end
-#     cat(axis, df, values)
-# end
-
-
-# use this function to reorder, AxisArrays does not support this 
-function reindex(df::AxisArray; index=nothing, columns=nothing)
-
-    if index == nothing
-        (newindex = :)
-    else
-        typeof(index) <: AxisArrays.Axis ? index = index.val : nothing 
-        indexdict = Dict(zip(df.axes[1].val, Iterators.countfrom(1)))
-        newindex = Int[]
-        for i=index push!(newindex, getindex(indexdict, i)) end 
+        expr[1,:] = start'
     end
 
-    if columns == nothing
-        (newcol = :)
-    else
-        typeof(columns) <: AxisArrays.Axis ? columns = columns.val : nothing 
-        coldict = Dict(zip(df.axes[2].val, Iterators.countfrom(1)))
-        newcol = Int[]
-        for i=columns push!(newcol, getindex(coldict, i)) end 
-    end
-
-    df[newindex, newcol]
-end
-
-function grouped_array(A)
-    groups = Dict()
-    for element ∈ unique(A)
-        groups[element] = findin(A, [element])
-    end
-    return groups
-end
-
-# like groupby in pandas 
-function group(A, by_array, func; axis=1)
-    by_array = grouped_array(by_array)
-    grouped = []
-    if ndims(A) == 1
-        for index = keys(by_array)
-            push!(grouped, func(A[by_array[index]]))
-        end
-    else
-        if axis==1
-            for index = keys(by_array)
-                push!(grouped, func(A[by_array[index],:], axis))
-            end
-        elseif axis==2
-            for index = keys(by_array)
-                push!(grouped, func(A[:,by_array[index]], axis))
-            end            
-        end
-        axname = axisnames(A)[axis]
-        grouped = cat(axis, grouped...)
-        axs = grouped.axes |> collect
-        axs[axis] =  Axis{axname}(by_array |> keys |> collect .|> string)
-        grouped = AxisArray(grouped.data, axs...) 
-    end
-    grouped
-end
-
-
-# --------------------------------------------------------------------------------------------------
-# DataFrames functions
-
-
-# auxilliaries
-# idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
-# rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
-idx_sym(dataframe) = Dict(zip(Symbol.(dataframe[:name]), Iterators.countfrom(1)))
-rev_idx_sym(dataframe) = Dict(zip(Iterators.countfrom(1), Symbol.(dataframe[:name])))
-
-# try to match pandas useful reindex with capavility of set_index, note that it also allows to index from 
-# a duplicate axis. 
-function reindex(df::DataFrame; index = nothing, columns = nothing, index_col=nothing, fill_value=missing)
-    df = copy(df)
-    if columns != nothing
-        columns = Symbol.(columns)        
-        for col=setdiff(columns, names(df))  df[col] = fill_value  end
-        ordercols = Int64[]; for col=columns push!(ordercols, df.colindex[col]) end
-        columns = names(df)[ordercols]
-    else
-        columns=names(df)
-    end
-
-    # sort columns such that index_col if existent or needed is at first place
-    if index != nothing 
-        if index_col == nothing
-            index_col=:name
-        end
-        in(index_col, columns) ? deleteat!(columns, findin(columns, [index_col])) : nothing
-        columns = append!([index_col], columns)        
-    end
-    df = df[columns]
-    
-    if index != nothing
-        # deal with nonincluded index values
-        not_in_index_col = setdiff(Array(index), df[index_col] )
-        if length(not_in_index_col) > 0
-            missing_rows = DataFrame( [not_in_index_col], [index_col])
-            for col=columns[2:end] missing_rows[col] = missing end
-            df = vcat(df, missing_rows)
-        end
-        
-        # reorder aligned to index, first check if index_col is unique, if not takes go through every entry
-        if any(nonunique(df[[index_col]]))
-            warn("Indexing from a duplicated axis")
-            orderindex = Int64[]; for i=index append!(orderindex , findin((df[index_col]), [i]) ) end
+    #set following snapshots
+    T = size(expr)[1]
+    for t=2:T
+        if t ∈ t_ip      
+            ip = findin(t_ip, t)[1] 
+            expr[t,:] = expr[t-1, :] + var[ip, :]
         else
-            dict = Dict(zip(df[index_col], Iterators.countfrom(1)))
-            orderindex = Int64[]; for i=index push!(orderindex, dict[i]) end
-        end
-       df[orderindex, :]
-    else 
-        df
-    end
-end
-
-
-function get_rows_of(df::DataFrame, names, index_col=:name)
-    dict = Dict(zip(df[index_col], Iterators.countfrom(1)))
-    positions = []
-    for i=names push!(positions,getindex(idx_gen, i)) end 
-    positions
-end
-
-
-function append_idx_col!(df::DataFrame)
-    if typeof(df)==Vector{DataFrames.DataFrame}
-        for df in df
-            df[:idx] = collect(1:nrow(df))
-        end
-    else
-        df[:idx] = collect(1:nrow(df))
-    end
-end
-
-# -----------------------------------------------------------------------------------------------
-# graph analysis
-
-function to_graph(n)
-    busidx = idx(n.buses)
-    g = DiGraph(size(n.buses)[1])
-    for l=1:size(n.lines)[1]
-        add_edge!(g, busidx[n.lines[l,"bus0"]], busidx[n.lines[l,"bus1"]] )
-    end
-    for l=1:size(n.links)[1]
-        add_edge!(g, busidx[n.links[l,"bus0"]], busidx[n.links[l,"bus1"]] )
-    end
-    return g
-end
-
-function incidence_matrix(n)
-    busidx = idx(n.buses)
-    lines = n.lines
-    K = zeros(size(n.buses)[1],size(lines)[1])
-    for l in 1:size(K)[2]
-        K[busidx[lines[l,"bus0"]],l] = 1
-        K[busidx[lines[l,"bus1"]],l] = -1
-    end
-    return K
-end
-
-function laplace_matrix(n)
-    K = incidence_matrix(n)
-    return K*K'
-end
-
-function ptdf_matrix(n)
-    K = incidence_matrix(n)
-    H = K' * pinv(K*K')
-    return H .- H[:,1]
-end
-
-function get_cycles(n)
-    busidx = idx(n.buses)
-    g = networkx[:Graph]()
-    g[:add_nodes_from](1:size(n.buses)[1])
-    g[:add_edges_from]([(busidx[n.lines[l,"bus0"]], busidx[n.lines[l,"bus1"]]) for l=1:size(n.lines)[1]])
-    networkx[:cycle_basis](g)
-end
-
-# ------ fix_p_nom for nuclear plants -------------------
-function set_nuclear_p_nom!(n)
-    fix_p_nom = fill(NaN, (length(n.snapshots), length(n.generators[:, "p_nom_extendable"])))
-    ext_gens_b = BitArray(n.generators[:, "p_nom_extendable"])
-
-    n.generators_t["p_nom_opt"] = (AxisArray(fix_p_nom, Axis{:time}(n.snapshots), 
-                                   Axis{:col}(n.generators.axes[1][ext_gens_b])))
-    # add values 
-    for i in 1:length(n.snapshots)
-        if Dates.year(n.snapshots[i]) >= 2020
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 261"] = 0
-        end
-        if Dates.year(n.snapshots[i]) >= 2022
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 429"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 217"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 294"] = 0
-        end
-        if Dates.year(n.snapshots[i]) >= 2023
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 317"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 392"] = 0
-            n.generators_t["p_nom_opt"][DateTime(n.snapshots[i]), "Nuclear 257"] = 0
+            expr[t,:] = expr[t-1, :]
         end
     end
-    # return n
 end
+

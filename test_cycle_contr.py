@@ -13,12 +13,7 @@ name = "elmod_8760h"
 
 n = pypsa.Network("/home/vres/data/pypsa_models/elmod/{}.nc"
                   .format(name))
+n.set_snapshots(n.snapshots[1:2])
 
-n.calculate_dependent_values()
-n.determine_network_topology()
+n.lopf()
 
-sub = n.sub_networks.obj[0]
-
-pypsa.pf.find_cycles(sub)
-
-C = sub.C

@@ -4,8 +4,8 @@ using JuMP
 include("auxilliaries.jl")
 
 
-function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=nothing,
-    fix_p_nom=nothing)
+function lopf_pathway(n, solver; extra_functionality=nothing, 
+    investment_period=nothing, invest_at_first_sn=false, fix_p_nom=nothing)
     # This function is organized as the following:
     # 
     # 0.        Initialize model
@@ -45,7 +45,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     N, = size(n.buses)
     T, = size(n.snapshots) #normally snapshots
     #t_ip = index of snapshot, when you invest, IP number of investments
-    t_ip, IP = get_investment_periods(n, investment_period)
+    t_ip, IP = get_investment_periods(n, investment_period, invest_at_first_sn)
     info("Solve network with $IP investment timesteps.")
     total_capacity_line_ext = 1e9
     info("The total capacity of the extendable lines in all investment periods is $total_capacity_line_ext .")
@@ -101,19 +101,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 
     # 1.4 add time-varying upper bound for p_nom
     @expression(m, G_p_nom[t=1:T, gr=1:N_ext], 0)
-    
-    # investment_period
-    G_p_nom[1,:] = p_nom[ext_gens_b]
-    # G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:]
-    investment_period == nothing ? G_p_nom[1,:] += G_p_nom_ext[1,:] - G_p_nom_red[1,:] : nothing
-    for t=2:T
-        if t ∈ t_ip          
-            ip = findin(t_ip,t)[1]
-            G_p_nom[t,:] = G_p_nom[t-1,:] + G_p_nom_ext[ip,:] - G_p_nom_red[ip,:]
-        else         
-            G_p_nom[t,:] = G_p_nom[t-1,:]
-        end
-    end
+    aggregate_investments!(G_p_nom, p_nom[ext_gens_b], 
+                           G_p_nom_ext - G_p_nom_red, t_ip)
 
     @constraints(m, begin
         [t=1:T, gr=1:N_ext], G_p_nom[t, gr]  >= Lb_ext_nom[gr]
@@ -121,16 +110,16 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     end)
 
 
-    # add fixed p_nom at a certain snapshot
-    if length(n.generators_t["p_nom_opt"])!=0
-        p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
-        values = n.generators_t["p_nom_opt"][p_nom_set]
-        index = findn(p_nom_set)
-        for (t,gr, v) in zip(index...,values)
-            @constraint(m,G_p_nom[t, gr] == v)
-        end
+    # # add fixed p_nom at a certain snapshot
+    # if length(n.generators_t["p_nom_opt"])!=0
+    #     p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
+    #     values = n.generators_t["p_nom_opt"][p_nom_set]
+    #     index = findn(p_nom_set)
+    #     for (t,gr, v) in zip(index...,values)
+    #         @constraint(m,G_p_nom[t, gr] == v)
+    #     end
 
-    end
+    # end
 
     # 1.5 set constraints for generators
 
@@ -187,24 +176,12 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 
     # 2.4 add time-varying upper bound for s_nom
     @expression(m, LN_s_nom[t=1:T, l=1:N_ext], 0)
-    
-    # investment_period
-    LN_s_nom[1,:] = s_nom[ext_lines_b]
-    # LN_s_nom[1,:] += LN_s_nom_ext[1,:]
-    investment_period == nothing ? LN_s_nom[1,:] += LN_s_nom_ext[1,:] : nothing
-    for t=2:T
-        if t ∈ t_ip        
-            ip = findin(t_ip,t)[1] 
-            LN_s_nom[t,:] = LN_s_nom[t-1,:] + LN_s_nom_ext[ip,:] 
-        else         
-            LN_s_nom[t,:] = LN_s_nom[t-1,:]
-        end
-    end
+    aggregate_investments!(LN_s_nom, s_nom[ext_lines_b], LN_s_nom_ext, t_ip)
 
     @constraints(m, begin
         [t=1:T, l=1:N_ext], LN_s_nom[t, l]  >= Lb_ext_nom[l]
         [t=1:T, l=1:N_ext], LN_s_nom[t, l]  <= Ub_ext_nom[l]
-        [ip=1:IP], sum(LN_s_nom_ext[ip, :]) <= total_capacity_line_ext/IP
+        # [ip=1:IP], sum(LN_s_nom_ext[ip, :]) <= total_capacity_line_ext/IP
     end)
 
     # 2.4 add line constraint for extendable lines
@@ -215,46 +192,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 
     LN = [LN_fix LN_ext]
     lines = lines[[find(fix_lines_b) ; find(ext_lines_b)], : ]
-    # fix_lines_b = (.!lines[:, "s_nom_extendable"])
-    # ext_lines_b = .!fix_lines_b
+
     ext_lines_b = BitArray(lines[:, "s_nom_extendable"])
     fix_lines_b = .! ext_lines_b
 
-    # 2.1 set different lines types
-    # lines = n.lines
-    # fix_lines_b = BitArray(.!lines[:, "s_nom_extendable"])
-    # ext_lines_b = .!fix_lines_b
-
-    # # 2.2 iterator bounds
-    # N_fix = sum(fix_lines_b)
-    # N_ext = sum(ext_lines_b)
-
-    # Lb_fix = -lines[fix_lines_b,"s_nom"]
-    # Ub_fix = lines[fix_lines_b,"s_nom"]
-    
-    # Lb_nom = lines[ext_lines_b,"s_nom_min"]
-    # Ub_nom = lines[ext_lines_b,"s_nom_max"]
-
-    # # 2.3 add variables
-    # @variables m begin
-    #     Lb_fix[l]  <=  LN_fix[t=1:T,l=1:N_fix] <= Ub_fix[l]
-
-    #     LN_ext[t=1:T,l=1:N_ext]
-        
-    #     Lb_nom[l] <=  LN_s_nom[l=1:N_ext] <= Ub_nom[l]
-    # end
-
-    # # 2.4 add line constraint for extendable lines
-    # @constraints(m, begin
-    #         [t=1:T,l=1:N_ext], LN_ext[t,l] <=  LN_s_nom[l]
-    #         [t=1:T,l=1:N_ext], LN_ext[t,l] >= -LN_s_nom[l]
-    # end)
-
-    # LN = [LN_fix LN_ext]
-    # lines = lines[[find(fix_lines_b) ; find(ext_lines_b)], : ]
-    # fix_lines_b = (.!lines[:, "s_nom_extendable"])
-    # ext_lines_b = .!fix_lines_b
-# --------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 # 3. add all links to the model
     # 3.1 set different link types
@@ -286,22 +228,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     end
 
     @expression(m, LK_p_nom[t=1:T, l=1:N_ext], 0)
+    aggregate_investments!(LK_p_nom, p_nom[ext_links_b], LK_p_nom_ext, t_ip)
 
-    # investment period
-    LK_p_nom[1,:] = p_nom[ext_links_b]
-    #LK_p_nom[1,:] += LK_p_nom_ext[1, :]
-    investment_period == nothing? LK_p_nom[1,:] += LK_p_nom_ext[1, :] : nothing
-    for t=2:T
-        if t ∈ t_ip        
-            ip = findin(t_ip,t)[1] 
-            LK_p_nom[t,:] = LK_p_nom[t-1, :] + LK_p_nom_ext[ip, :]
-        else
-            LK_p_nom[t,:] = LK_p_nom[t-1, :]
-        end
-    end
-
-    # Lb_ext = LK_p_nom .* links[ext_links_b, "p_min_pu"]
-    # Ub_ext = LK_p_nom .* links[ext_links_b, "p_max_pu"]
 
     # 3.4 set constraints for extendable links
     @constraints(m, begin
@@ -312,7 +240,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     @constraints(m, begin
     [t=1:T,l=1:N_ext], LK_p_nom[t,l] >= Lb_nom[l]
     [t=1:T,l=1:N_ext], LK_p_nom[t,l] <= Ub_nom[l]
-    [ip=1:IP], sum(LK_p_nom_ext[ip, :]) <= total_capacity_line_ext/IP # change later with cost limit for DC lines
+    # [ip=1:IP], sum(LK_p_nom_ext[ip, :]) <= total_capacity_line_ext/IP 
+    # change later with cost limit for DC lines
     end)
 
     LK = [LK_fix LK_ext]
@@ -322,7 +251,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
     ext_links_b = BitArray(links[:, "p_nom_extendable"])
     fix_links_b = .!ext_links_b
 
-# --------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # 4. define storage_units
     # 4.1 set different storage_units types
     storage_units = n.storage_units
@@ -400,7 +329,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
             [t=2:T,s=1:N_sus], SU_soc[t,s] == SU_soc[t-1,s] + SU_soc_change[t,s]
         end)
 
-# --------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 # 5. define stores
 # 5.1 set different stores types
@@ -480,7 +409,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
         end)
 
     tic()
-# --------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 ## 6. define nodal balance constraint
 
@@ -527,46 +456,10 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
 #     g_sub = induced_subgraph(g, sub)[1]
 
     (branches, var, attribute) = (lines, LN, "x")
-    branches = assign(branches, 1:size(branches)[1], "idx")
-    cycles = get_cycles(n)
-    if ndims(cycles)<2
-        cycles = [cycle for cycle in cycles if length(cycle)>2]
-    else
-        cycles = [cycles[i,:] for i in 1:size(cycles)[1]]
-    end
-    if length(cycles)>0
-        cycles_branch = Array{Int64,1}[]
-        directions = Array{Float64,1}[]
-        for cyc=1:length(cycles)
-            push!(cycles_branch,Int64[])
-            push!(directions,Float64[])
-            for bus=1:length(cycles[cyc])
-                bus0 = cycles[cyc][bus]
-                bus1 = cycles[cyc][(bus)%length(cycles[cyc])+1]
-                try
-                    push!(cycles_branch[cyc],branches[((branches[:,"bus0"].==reverse_busidx[bus0])
-                                                     .&(branches[:,"bus1"].==reverse_busidx[bus1])),"idx"][1] )
-                    push!(directions[cyc], 1.)
-                catch y
-                    if isa(y, BoundsError)
-                        push!(cycles_branch[cyc], branches[((branches[:,"bus0"].==reverse_busidx[bus1])
-                                                          .&(branches[:,"bus1"].==reverse_busidx[bus0])),"idx"][1] )
-                        push!(directions[cyc], -1.)
-                    else
-                        return y
-                    end
-                end
-            end
-        end
-        if attribute=="x"
-            @constraint(m, line_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
-                    dot(directions[c] .* float.(lines[cycles_branch[c], "x_pu"]),
-                        LN[t,cycles_branch[c]]) == 0)
-        # elseif attribute==:r
-        #     @constraint(m, link_cycle_constraint[c=1:length(cycles_branch), t=1:T] ,
-        #           @show(directions, cycles_branch)  dot(directions[c] .* links[cycles_branch[c], :r]/380. , LK[cycles_branch[c],t]) == 0)
-        end
-    end
+    cycles, dirs = get_directed_cycles(n, branches)
+    @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
+            dot(dirs[c] .* float.(lines[cycles[c], "x_pu"]),
+                LN[t, cycles[c]]) == 0)
 # --------------------------------------------------------------------------------------------------------
 
 # 8. set global_constraints
@@ -584,10 +477,10 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
                     for carrier in nonnull_carriers.axes[1].val) <=  co2_limit)
     end
 
-# 9. add extra_functionality
-    if extra_functionality == "constraint_p_nom_opt"
-        @constraint(m, G_p_nom[3,3] == 400)
-    end
+# # 9. add extra_functionality
+#     if extra_functionality == "constraint_p_nom_opt"
+#         @constraint(m, G_p_nom[3,3] == 400)
+#     end
 
 # --------------------------------------------------------------------------------------------------------
 # muss noch umgeschrieben werden, maintenance_cost für alle Generatoren, nicht nur extenable
@@ -625,8 +518,12 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
         # generators[.!ext_gens_b, "p_nom_opt"] = generators[.!ext_gens_b, "p_nom"]
         # generators[ext_gens_b,"p_nom_opt"] = getvalue(G_p_nom)
         n.generators = generators
-        n.generators_t["p_nom_opt"] = AxisArray(getvalue(G_p_nom), Axis{:row}(n.snapshots), Axis{:col}(generators.axes[1].val[ext_gens_b]))
-        n.generators_t["p"] = AxisArray(getvalue(G), Axis{:row}(n.snapshots), Axis{:col}(generators.axes[1].val))
+        n.generators_t["p_nom_opt"] = AxisArray(getvalue(G_p_nom), 
+                                                Axis{:row}(n.snapshots), 
+                                                Axis{:col}(generators.axes[1].val[ext_gens_b]))
+        n.generators_t["p"] = AxisArray(getvalue(G), 
+                                        Axis{:row}(n.snapshots), 
+                                        Axis{:col}(generators.axes[1].val))
         n.generators = reindex(n.generators, index = orig_gen_order)
 
         # lines
@@ -634,8 +531,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
         n.lines = lines
         n.lines[fix_lines_b,"s_nom_opt"] = n.lines[fix_lines_b, "s_nom"]
         # n.lines[ext_lines_b,"s_nom_opt"] = getvalue(LN_s_nom)
-        n.lines_t["p0"] = AxisArray(getvalue(LN), Axis{:row}(n.snapshots), Axis{:col}(n.lines.axes[1].val))
-        n.lines_t["s_nom_opt"] = AxisArray(getvalue(LN_s_nom), Axis{:row}(n.snapshots), Axis{:col}(n.lines.axes[1].val[ext_lines_b]))
+        n.lines_t["p0"] = AxisArray(getvalue(LN),  
+                                    Axis{:row}(n.snapshots), 
+                                    Axis{:col}(n.lines.axes[1].val))
+        n.lines_t["s_nom_opt"] = AxisArray(getvalue(LN_s_nom), 
+        Axis{:row}(n.snapshots), Axis{:col}(n.lines.axes[1].val[ext_lines_b]))
         n.lines = reindex(n.lines, index = orig_line_order)
 
         # links
@@ -643,8 +543,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing, investment_period=
         n.links = links
         n.links[fix_links_b,"p_nom_opt"] = n.links[fix_links_b, "p_nom"]
         # n.links[ext_links_b,"p_nom_opt"] = getvalue(LK_p_nom)
-        n.links_t["p0"] = AxisArray(getvalue(LK), Axis{:row}(n.snapshots), Axis{:col}(n.links.axes[1].val))
-        n.links_t["p_nom_opt"] = AxisArray(getvalue(LK_p_nom), Axis{:row}(n.snapshots), Axis{:col}(n.links.axes[1].val[ext_links_b]))
+        n.links_t["p0"] = AxisArray(getvalue(LK), 
+                                    Axis{:row}(n.snapshots), 
+                                    Axis{:col}(n.links.axes[1].val))
+        n.links_t["p_nom_opt"] = AxisArray(getvalue(LK_p_nom), 
+        Axis{:row}(n.snapshots), Axis{:col}(n.links.axes[1].val[ext_links_b]))
         n.links = reindex(n.links, index = orig_link_order)
 
         # storage_units

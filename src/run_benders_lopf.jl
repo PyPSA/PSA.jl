@@ -66,10 +66,13 @@ function run_benders_lopf(network, solver;
 
     ubs = Float64[]
     lbs = Float64[]
+    mem_master = Float64[] # MBytes
 
     println("\nITER\tGAP")
 
     while(iteration <= max_iterations)
+
+        push!(mem_master,Base.summarysize(model_master)/1e6)
         
         status_master = solve(model_master);
 
@@ -258,6 +261,6 @@ function run_benders_lopf(network, solver;
         Try choosing max_iterations>>$(max_iterations)!")
     end
 
-    return (model_master, models_slave, lbs, ubs);
+    return (model_master, models_slave, lbs, ubs, mem_master);
 
 end

@@ -310,6 +310,7 @@ function get_iis(m::JuMP.Model)
     m.linconstr[find(iis_constrs)]
 end
 
+# TODO: get slack for different solvers!
 # if slack is zero, relaxation would improve results
 function get_slack(m::JuMP.Model)
     Gurobi.get_dblattrarray( m.internalModel.inner, "Slack", 1, Gurobi.num_constrs(m.internalModel.inner))
@@ -334,6 +335,28 @@ function print_active_constraints!(m::JuMP.Model)
 
     for ac in active_constraints
         println(round(slack[ac],5),"\t\t",m.linconstr[ac])
+    end
+
+end
+
+function get_inactive_constraints(m::JuMP.Model; slack_filter=1e-9)
+
+    slack = get_slack(m)
+    
+    function within_filter(x)
+        (x >= slack_filter || x <= -slack_filter)
+    end
+    
+    sort(collect(Set(find(within_filter,slack))))
+end
+
+function print_inactive_constraints!(m::JuMP.Model; slack_filter=1e-9)
+
+    slack = get_slack(m)
+    inactive_constraints = get_inactive_constraints(m, slack_filter=slack_filter)
+
+    for iac in inactive_constraints
+        println(round(slack[iac],5),"\t\t",m.linconstr[iac])
     end
 
 end

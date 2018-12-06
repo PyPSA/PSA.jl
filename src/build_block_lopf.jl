@@ -8,7 +8,7 @@ using BlockDecomposition
 # --- CPLEX cannot handle this, maybe need manual benders decomposition scheme.
 
 function build_block_lopf(network, solver; formulation::String="angles_linear",
-                         investment_type::String="integer", decomposition::String="benders")
+                         investment_type::String="integer", decomposition::String="benders", n_sub::Int64=1)
 
     m = build_lopf(network, solver;
                    formulation=formulation,
@@ -19,13 +19,13 @@ function build_block_lopf(network, solver; formulation::String="angles_linear",
         println("Apply Benders Decomposition")
 
         function b_decomp(varname::Symbol, varid::Tuple)
-            
+
             master_vars = Set([:LN_s_nom, :LN_inv, :G_p_nom, :LN_opt, :LK_p_nom, :SU_p_nom, :ST_e_nom])
 
             if in(varname, master_vars)
                 return (:B_MASTER, 0)
             else
-                return (:B_SP, 0)
+                return (:B_SP, (varid[2]-1)%n_sub)
             end
 
         end

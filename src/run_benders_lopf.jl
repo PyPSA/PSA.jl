@@ -9,8 +9,18 @@ function run_benders_lopf(network, solver;
                             split::Bool = false,
                             individualcuts::Bool = false,
                             tolerance::Float64 = 1e-1,
+                            mip_gap::Float64 = 1e-11,
                             bigM::Float64 = 1e12,
-                            max_iterations::Int64 =  1000)
+                            max_iterations::Int64 =  1000,
+                            relax::Bool = false,
+                            relax_threshold::Float64 = 1e5,
+                            round::Bool = false,
+                            round_threshold::Float64 = 0.5,
+                            inexact_iterations::Int64 = 0,
+                            inexact_mip_gap::Float64 = 1e-5,
+                            inexact_threshold::Float64 = 1e5,
+                            remove_inactive::Bool = false,
+                            remove_inactive_threshold::Float64 = 1e2)
 
     calculate_dependent_values!(network)
     T = nrow(network.snapshots)
@@ -63,6 +73,8 @@ function run_benders_lopf(network, solver;
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
             
     iteration = 1
+    inexact_iterations > 0 ? initial_mip_gap=inexact_mip_gap : initial_mip_gap = mip_gap
+    push!(solver.options, (:MIPGap, initial_mip_gap))
 
     ubs = Float64[]
     lbs = Float64[]
@@ -74,7 +86,7 @@ function run_benders_lopf(network, solver;
 
         push!(mem_master,Base.summarysize(model_master)/1e6)
         
-        status_master = solve(model_master);
+        status_master = solve(model_master, relaxation=relax);
 
         # cases of master problem
         if status_master == :Infeasible
@@ -92,7 +104,7 @@ function run_benders_lopf(network, solver;
             # G_p_nom_current = network.generators[ext_gens_b,:][:p_nom_max]
             # LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom_max]
             
-            investment_type=="integer" ? LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:])) : nothing
+            LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:]))
             setvalue(model_master[:ALPHA], -bigM)
 
         elseif status_master == :Optimal
@@ -100,10 +112,19 @@ function run_benders_lopf(network, solver;
             objective_master_current = getobjectivevalue(model_master)
             G_p_nom_current = getvalue(model_master[:G_p_nom])
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
-            investment_type=="integer" ? LN_inv_current = getvalue(model_master[:LN_inv]) : nothing
+            LN_inv_current = getvalue(model_master[:LN_inv])
+
+            # inactive cut removal
+            # TODO: can be supported with MathOptInterface
 
         else
             error("Odd status of master problem: $status_master")
+        end
+
+        if round && relax
+            for l=1:N_ext_LN
+                LN_s_nom_current[l] = (1.0+ceil(LN_inv_current[l])/network.lines[ext_lines_b,:num_parallel][l]) * network.lines[ext_lines_b,:s_nom][l]
+            end
         end
 
         # # for debugging
@@ -181,6 +202,17 @@ function run_benders_lopf(network, solver;
         # "\nALPHA = ", getvalue(model_master[:ALPHA]))
 
         ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_groups)
+
+        if objective_slave_current - ALPHA_current <= relax_threshold && relax == true
+            println("Drop relaxation!")
+            relax = false
+        end
+
+        if objective_slave_current - ALPHA_current <= inexact_threshold || inexact_iterations == iteration
+            println("Drop inexact solutions!")
+            println(mip_gap)
+            push!(solver.options, (:MIPGap, mip_gap))
+        end
 
         # cases of slave problem
         if (status_slave == :Optimal && 

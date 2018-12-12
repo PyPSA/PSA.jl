@@ -223,7 +223,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             end)
         end
 
-        rescaling ? resc_factor = 1e4 : nothing
+        rescaling ? resc_factor = 1e5 : nothing
 
         if benders!="master" && benders!="slave"
 
@@ -293,7 +293,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         # 2.4 add line constraint for extendable lines
         #println("-- 2.4 add line constraint for extendable lines")
 
-        rescaling ? resc_factor = 1e2 : nothing
+        rescaling ? resc_factor = 1e3 : nothing
 
         if benders != "master" && benders != "slave"
 
@@ -790,7 +790,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 end
 
                 
-                rescaling ? resc_factor = 1e-2 : nothing
+                rescaling ? resc_factor = 1e-3 : nothing
 
                 sn>0 ? cnt=count : cnt=counter
 
@@ -1079,7 +1079,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
             #println("Adding global CO2 constraints to the model.")
     
-            rescaling ? resc_factor = 1e2 : nothing
+            rescaling ? resc_factor = 1e3 : nothing
             
             carrier_index(carrier) = findin(generators[:carrier], carrier)
     
@@ -1165,18 +1165,22 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     
                     exist_fix_ren_gens ? def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix : nothing
                     def_p_max_pu_ext[loc_ext_b] .= sum_of_p_max_pu_ext
+
+                    rescaling ? resc_factor = 1e-3 : nothing
     
                     if exist_fix_ren_gens
                         @constraint(m, fakerestarget,
+                            resc_factor * (
                             dot(def_p_max_pu_fix,fix_ren_gens[:p_nom]) +
                             dot(def_p_max_pu_ext,G_p_nom)
-                            >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
+                            )
+                            >= resc_factor * fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
                         )
                         
                     else
                         @constraint(m, fakerestarget,
-                            dot(def_p_max_pu_ext,G_p_nom)
-                            >= fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
+                            resc_factor * dot(def_p_max_pu_ext,G_p_nom)
+                            >= resc_factor * fakerestarget[1] * sum(network.snapshots[:weightings][t]*network.loads_t["p_set"][t,n] for t=1:T for n=2:N_loads)
                         )
                         
                     end

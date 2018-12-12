@@ -74,7 +74,7 @@ function run_benders_lopf(network, solver;
             
     iteration = 1
     inexact_iterations > 0 ? initial_mip_gap=inexact_mip_gap : initial_mip_gap = mip_gap
-    push!(solver.options, (:MIPGap, initial_mip_gap))
+    inexact_iterations > 0 ? push!(solver.options, (:MIPGap, initial_mip_gap)) : nothing
 
     ubs = Float64[]
     lbs = Float64[]
@@ -294,5 +294,186 @@ function run_benders_lopf(network, solver;
     end
 
     return (model_master, models_slave, lbs, ubs, mem_master);
+
+end
+
+function run_lazybenders_lopf(network, solver; 
+    formulation::String = "angles_linear",
+    investment_type::String = "continuous",
+    split::Bool = false,
+    individualcuts::Bool = false,
+    tolerance::Float64 = 1e-1,
+    mip_gap::Float64 = 1e-10,
+    bigM::Float64 = 1e12,
+    )
+
+    # precalculations
+    calculate_dependent_values!(network)
+    T = nrow(network.snapshots)
+    ext_gens_b = ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
+    ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
+    N_ext_G = sum(ext_gens_b)
+    N_ext_LN = sum(ext_lines_b)
+    individualcuts ? N_groups = T : N_groups = 1
+    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
+    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
+
+    coupled_slave_constrs = [
+        :lower_gen_limit,
+        :upper_gen_limit,
+        :lower_line_limit,
+        :upper_line_limit
+        ]
+
+    # build master
+    model_master = build_lopf(network, solver,
+        benders="master",
+        investment_type=investment_type,
+        N_groups=N_groups
+    )
+
+    # build subproblems
+    models_slave = JuMP.Model[]
+    if !split
+        push!(models_slave, 
+            build_lopf(network, solver, 
+                benders="slave",
+                formulation=formulation,
+            )
+        )
+    else
+        for t=1:T
+            push!(models_slave, 
+                build_lopf(network, solver, 
+                    benders="slave",
+                    formulation=formulation,
+                    snapshot_number=t
+                )
+            )
+        end
+    end
+    N_sub = length(models_slave)
+
+    uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
+
+    # benders cut callback function
+    function benderscut(cb)
+
+        objective_master_current = getobjectivevalue(model_master)
+        G_p_nom_current = getvalue(model_master[:G_p_nom])
+        LN_s_nom_current = getvalue(model_master[:LN_s_nom])
+        LN_inv_current = getvalue(model_master[:LN_inv])
+
+        # adapt RHS of slave model with solution from master problem
+        model_slave = models_slave[1]
+        for t=1:T
+
+            split ? model_slave = models_slave[t] : nothing
+
+            for gr=1:N_ext_G
+                JuMP.setRHS(
+                    model_slave[:lower_gen_limit][t,gr],
+                    G_p_nom_current[gr]*p_min_pu(t,gr)
+                )
+                JuMP.setRHS(
+                    model_slave[:upper_gen_limit][t,gr],
+                    G_p_nom_current[gr]*p_max_pu(t,gr)
+                )
+            end
+
+            for l=1:N_ext_LN
+                JuMP.setRHS(
+                    model_slave[:lower_line_limit][t,l],
+                    -network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
+                )
+                JuMP.setRHS(
+                    model_slave[:upper_line_limit][t,l],
+                    network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
+                )
+            end
+
+        end
+
+        # solve subproblems
+        statuses_slave = Symbol[]
+        for i=1:N_sub
+            push!(statuses_slave, solve(models_slave[i])) 
+        end
+        status_slave = minimum(statuses_slave)
+
+        # get results
+        objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_sub)
+        duals_lower_gen_limit = getduals(models_slave, :lower_gen_limit)
+        duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
+        duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
+        duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
+        ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_groups)
+
+        # go through cases of subproblems
+        if (status_slave == :Optimal && 
+            objective_slave_current - ALPHA_current <= tolerance)
+
+            println("Optimal solution of the original problem found")
+            println("The optimal objective value is ", objective_master_current)
+            return
+        end
+
+        if !individualcuts
+            Trange = [1:T] 
+        else 
+            Trange = 1:T
+        end
+
+        for Tr = Trange
+
+            N_sub == 1 ? cnt = 1 : cnt = Tr
+            individualcuts ? cntr = Tr : cntr = 1
+
+            if (status_slave == :Optimal &&
+                objective_slave_current - ALPHA_current > tolerance)
+
+                @lazyconstraint(cb, model_master[:ALPHA][cntr] >=
+                
+                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                    for t=Tr for gr=1:N_ext_G)
+                    + 
+                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    for t=Tr for l=1:N_ext_LN)
+    
+                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                
+                )
+            end
+            
+            if status_slave == :Infeasible
+    
+                @lazyconstraint(cb, 0 >=
+    
+                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                    for t=Tr for gr=1:N_ext_G)
+                    + 
+                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    for t=Tr for l=1:N_ext_LN)
+    
+                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                )
+            end
+            
+        end
+
+    end # function benderscut
+
+    # solve master with lazy callback
+    addlazycallback(model_master, benderscut)
+    status_master = solve(model_master);
+
+    # output results
+    write_optimalsolution(network, model_master; sm=models_slave, joint=false)
+
+    return (model_master, models_slave);
 
 end

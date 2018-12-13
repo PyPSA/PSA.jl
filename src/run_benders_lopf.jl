@@ -305,6 +305,7 @@ function run_lazybenders_lopf(network, solver;
     tolerance::Float64 = 1e-1,
     mip_gap::Float64 = 1e-10,
     bigM::Float64 = 1e12,
+    update_x::Bool = false
     )
 
     # precalculations
@@ -317,6 +318,8 @@ function run_lazybenders_lopf(network, solver;
     individualcuts ? N_groups = T : N_groups = 1
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
+    x_orig = network.lines[:x]
+    x_pu_orig = network.lines[:x_pu]
 
     coupled_slave_constrs = [
         :lower_gen_limit,
@@ -332,56 +335,99 @@ function run_lazybenders_lopf(network, solver;
         N_groups=N_groups
     )
 
-    # build subproblems
-    models_slave = JuMP.Model[]
-    if !split
-        push!(models_slave, 
-            build_lopf(network, solver, 
-                benders="slave",
-                formulation=formulation,
-            )
-        )
-    else
-        for t=1:T
+    if !update_x
+
+        # build subproblems
+        models_slave = JuMP.Model[]
+        if !split
             push!(models_slave, 
                 build_lopf(network, solver, 
                     benders="slave",
                     formulation=formulation,
-                    snapshot_number=t
                 )
             )
+        else
+            for t=1:T
+                push!(models_slave, 
+                    build_lopf(network, solver, 
+                        benders="slave",
+                        formulation=formulation,
+                        snapshot_number=t
+                    )
+                )
+            end
         end
+        N_sub = length(models_slave)
+    
+        uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
+        
     end
-    N_sub = length(models_slave)
-
-    uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
-
+    
     # benders cut callback function
     function benderscut(cb)
-
+        
         objective_master_current = getobjectivevalue(model_master)
         G_p_nom_current = getvalue(model_master[:G_p_nom])
         LN_s_nom_current = getvalue(model_master[:LN_s_nom])
         LN_inv_current = getvalue(model_master[:LN_inv])
 
+        if update_x
+
+            # update line reactances (pu) according to master values
+            @show(LN_inv_current)
+            @show(network.lines[:x_pu])
+            for l=1:nrow(network.lines)
+                if network.lines[:s_nom_extendable][l]
+                    network.lines[:x_pu][l] = x_pu_orig[l] * ( 1 + LN_inv_current[l] / network.lines[:num_parallel][l] )
+                    network.lines[:x][l] = x_orig[l] * ( 1 + LN_inv_current[l] / network.lines[:num_parallel][l] )
+                end
+            end
+            @show(network.lines[:x_pu])
+            
+            # build subproblems
+            models_slave = JuMP.Model[]
+            if !split
+                push!(models_slave, 
+                    build_lopf(network, solver, 
+                        benders="slave",
+                        formulation=formulation,
+                    )
+                )
+            else
+                for t=1:T
+                    push!(models_slave, 
+                        build_lopf(network, solver, 
+                            benders="slave",
+                            formulation=formulation,
+                            snapshot_number=t
+                        )
+                    )
+                end
+            end
+            N_sub = length(models_slave)
+        
+            uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
+        end
+
+
         # adapt RHS of slave model with solution from master problem
         model_slave = models_slave[1]
         for t=1:T
-
+            
             split ? model_slave = models_slave[t] : nothing
-
+            
             for gr=1:N_ext_G
                 JuMP.setRHS(
                     model_slave[:lower_gen_limit][t,gr],
                     G_p_nom_current[gr]*p_min_pu(t,gr)
-                )
-                JuMP.setRHS(
-                    model_slave[:upper_gen_limit][t,gr],
-                    G_p_nom_current[gr]*p_max_pu(t,gr)
-                )
-            end
-
-            for l=1:N_ext_LN
+                    )
+                    JuMP.setRHS(
+                        model_slave[:upper_gen_limit][t,gr],
+                        G_p_nom_current[gr]*p_max_pu(t,gr)
+                        )
+                    end
+                    
+                    for l=1:N_ext_LN
                 JuMP.setRHS(
                     model_slave[:lower_line_limit][t,l],
                     -network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]

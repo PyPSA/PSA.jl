@@ -49,8 +49,8 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
         s_nom_extendable_0 = deepcopy(network.lines[:s_nom_extendable])
         num_parallel_0 = deepcopy(network.lines[:num_parallel])
         m_opt = nothing
-        threshold_opt = nothing
         threshold = discretization_thresholds[1]
+        threshold_opt = threshold
 
         # iterate through all possible discretization thresholds
         println("LENGTH OF DISC THRESH IS $(length(discretization_thresholds))")
@@ -107,7 +107,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
 
         # run with optimal threshold choice
         println("#######")
-        println("RUNNING AGAIN WITH OPTIMAL THHRESHOLD CHOICE $threshold_opt")
+        println("RUNNING AGAIN WITH OPTIMAL THRESHOLD CHOICE $threshold_opt")
         println("#######")
 
         # round line extensions to integer

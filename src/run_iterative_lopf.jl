@@ -1,4 +1,4 @@
-function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,formulation::String="angles_linear", objective::String="total", investment_type::String="continuous", post_discretization::Bool=false, discretization_thresholds::Array{Float64,1}=[0.2,0.3], blockmodel=false, decomposition="benders")
+function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,formulation::String="angles_linear", investment_type::String="continuous", post_discretization::Bool=false, discretization_thresholds::Array{Float64,1}=[0.2,0.3], blockmodel=false, decomposition="benders")
 
     x_0 = deepcopy(network.lines[:x])
     s_nom_0 = deepcopy(network.lines[:s_nom])
@@ -16,7 +16,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
 
         println("Run iteration $k")
 
-        m = run_lopf(network, solver; rescaling=rescaling,formulation=formulation, objective=objective, investment_type=investment_type, blockmodel=blockmodel, decomposition=decomposition)
+        m = run_lopf(network, solver; rescaling=rescaling,formulation=formulation, investment_type=investment_type, blockmodel=blockmodel, decomposition=decomposition)
 
         push!(objectives, m.objVal)
         push!(capacities, network.lines[:s_nom_opt])
@@ -85,7 +85,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
                 end
 
                 # run lopf
-                m_threshold = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", objective=objective, investment_type="continuous")
+                m_threshold = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", investment_type="continuous")
 
                 # compare to best solution in loop; better gets model
                 if (threshold == discretization_thresholds[1]) || (m_threshold.objVal < m_opt.objVal)
@@ -133,7 +133,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
         end
 
         s_nom_opt_T = deepcopy(network.lines[:s_nom_opt])
-        m = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", objective=objective, investment_type="continuous")
+        m = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", investment_type="continuous")
 
         # write best results to network
         for l=1:nrow(network.lines)

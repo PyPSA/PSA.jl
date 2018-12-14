@@ -4,7 +4,7 @@ using MathProgBase
 include("utils.jl")
 
 function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles_linear",
-                    objective::String="total", investment_type::String="continuous",
+                    investment_type::String="continuous",
                     blockmodel::Bool=false, benders::String="", snapshot_number=0, N_groups=1, blockstructure::Bool=false)
     
                     
@@ -1099,7 +1099,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             # 7.2 limit on transmission expansion volume
             # sum of capacity expansion times length over all lines <= limit in MWkm unit
             if benders != "slave"
-                if nrow(network.global_constraints)>0 && in("mwkm_limit", network.global_constraints[:name])
+                if nrow(network.global_constraints)>0 && in(true, network.lines[:s_nom_extendable]) && in("mwkm_limit", network.global_constraints[:name])
                     mwkm_limit = network.global_constraints[network.global_constraints[:name].=="mwkm_limit", :constant]
                     #println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
                     @constraint(m, mwkmlimit, 

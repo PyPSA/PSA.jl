@@ -639,9 +639,13 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
 
 
     # mwkm transmission limit
-    mwkm = dot(getvalue(m[:LN_s_nom]),lines[:length]) / dot(lines[:s_nom],lines[:length])
-
-    println("Transmission line volume is increased by factor $mwkm")
+    # try
+    #     mwkm = dot(getvalue(m[:LN_s_nom]),lines[:length]) / dot(lines[:s_nom],lines[:length])
+    #     println("Transmission line volume is increased by factor $mwkm")
+    # catch e
+    #     println("Could not calculate transmission line volume increase.")
+    #     continue
+    # end
 
     # curtailment
     sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)

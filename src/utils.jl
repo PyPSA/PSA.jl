@@ -514,6 +514,21 @@ end
 
 getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
 
+# TODO: verify
+function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol)
+    x=getdual(getindex.(m, cnstr))
+    z = []
+    for t=1:length(x)
+        size = maximum(keys(x[t]))
+        y = zeros(size[3], size[2]+1, size[1])
+        for (l,c,ts) in keys(x[t])
+        y[ts,c+1,l] =  x[t][l,c,ts]
+        end
+        push!(z, y)
+    end
+    z = vcat(z...)
+end
+
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 
     joint ? sm = m : nothing

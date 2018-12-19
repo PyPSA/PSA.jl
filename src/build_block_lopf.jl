@@ -20,12 +20,12 @@ function build_block_lopf(network, solver; formulation::String="angles_linear",
 
         function b_decomp(varname::Symbol, varid::Tuple)
 
-            master_vars = Set([:LN_s_nom, :LN_inv, :LN_opt, :G_p_nom, :LN_opt, :LK_p_nom, :SU_p_nom, :ST_e_nom])
+            master_vars = Set([:LN_s_nom, :LN_opt, :LN_inv, :G_p_nom, :LK_p_nom, :SU_p_nom, :ST_e_nom])
 
             if in(varname, master_vars)
                 return (:B_MASTER, 0)
             else
-                return (:B_SP, (varid[2]-1)%n_sub)
+                return (:B_SP, (varid[2])%n_sub)
             end
 
         end

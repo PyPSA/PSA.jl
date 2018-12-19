@@ -308,6 +308,11 @@ function run_lazybenders_lopf(network, solver;
     update_x::Bool = false
     )
 
+    # TODO: integer bigm does not support update_x option
+
+    # sanity checks
+    investment_type=="integer_bigm" && formulation!="angles_linear_integer_bigm" ? error("Investment type $investment_type requires formulation <angles_linear_integer_bigm>, not $formulation!") : nothing
+
     # precalculations
     calculate_dependent_values!(network)
     T = nrow(network.snapshots)
@@ -327,6 +332,11 @@ function run_lazybenders_lopf(network, solver;
         :lower_line_limit,
         :upper_line_limit
         ]
+
+    if investment_type=="integer_bigm"
+        push!(coupled_slave_constrs, :flows_upper)
+        push!(coupled_slave_constrs, :flows_lower)
+    end
 
     # build master
     model_master = build_lopf(network, solver,
@@ -369,20 +379,19 @@ function run_lazybenders_lopf(network, solver;
         objective_master_current = getobjectivevalue(model_master)
         G_p_nom_current = getvalue(model_master[:G_p_nom])
         LN_s_nom_current = getvalue(model_master[:LN_s_nom])
-        LN_inv_current = getvalue(model_master[:LN_inv])
+        investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
+
+        candidates = line_extensions_candidates(network)
 
         if update_x
 
             # update line reactances (pu) according to master values
-            @show(LN_inv_current)
-            @show(network.lines[:x_pu])
             for l=1:nrow(network.lines)
                 if network.lines[:s_nom_extendable][l]
                     network.lines[:x_pu][l] = x_pu_orig[l] * ( 1 + LN_inv_current[l] / network.lines[:num_parallel][l] )
                     network.lines[:x][l] = x_orig[l] * ( 1 + LN_inv_current[l] / network.lines[:num_parallel][l] )
                 end
             end
-            @show(network.lines[:x_pu])
             
             # build subproblems
             models_slave = JuMP.Model[]
@@ -421,13 +430,13 @@ function run_lazybenders_lopf(network, solver;
                     model_slave[:lower_gen_limit][t,gr],
                     G_p_nom_current[gr]*p_min_pu(t,gr)
                     )
-                    JuMP.setRHS(
-                        model_slave[:upper_gen_limit][t,gr],
-                        G_p_nom_current[gr]*p_max_pu(t,gr)
-                        )
-                    end
+                JuMP.setRHS(
+                    model_slave[:upper_gen_limit][t,gr],
+                    G_p_nom_current[gr]*p_max_pu(t,gr)
+                    )
+            end
                     
-                    for l=1:N_ext_LN
+            for l=1:N_ext_LN
                 JuMP.setRHS(
                     model_slave[:lower_line_limit][t,l],
                     -network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
@@ -436,8 +445,22 @@ function run_lazybenders_lopf(network, solver;
                     model_slave[:upper_line_limit][t,l],
                     network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
                 )
-            end
 
+                if investment_type=="integer_bigm"
+                    for c in candidates[l]
+                        JuMP.setRHS(
+                            model_slave[:flows_upper][l,c,t],
+                            (((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6))*(LN_opt_current[l,c]-1) 
+                        )
+                        JuMP.setRHS(
+                            model_slave[:flows_lower][l,c,t],
+                            (((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt_current[l,c]) 
+                        )
+                    end
+                end
+            end
         end
 
         # solve subproblems
@@ -447,12 +470,23 @@ function run_lazybenders_lopf(network, solver;
         end
         status_slave = minimum(statuses_slave)
 
+        # # for debugging
+        # if status_slave == :Infeasible
+        #     iis = get_iis(models_slave[1])
+        #     for i in iis
+        #         println(i)
+        #     end
+        # end
+
         # get results
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_sub)
         duals_lower_gen_limit = getduals(models_slave, :lower_gen_limit)
         duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
         duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
         duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
+        duals_flows_upper = getduals_bigm(models_slave, :flows_upper)
+        duals_flows_lower = getduals_bigm(models_slave, :flows_lower)
+
         ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_groups)
 
         # go through cases of subproblems
@@ -478,6 +512,7 @@ function run_lazybenders_lopf(network, solver;
             if (status_slave == :Optimal &&
                 objective_slave_current - ALPHA_current > tolerance)
 
+                # TODO: verify
                 @lazyconstraint(cb, model_master[:ALPHA][cntr] >=
                 
                     sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
@@ -487,14 +522,22 @@ function run_lazybenders_lopf(network, solver;
                     sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                     for t=Tr for l=1:N_ext_LN)
+                    +
+                    sum(  duals_flows_upper[t,c+1,l] * (-1) *
+                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                        + duals_flows_lower[t,c+1,l] * 
+                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                    for t=Tr for l=1:N_ext_LN  for c in candidates[l])
     
                     + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
-                
                 )
             end
             
             if status_slave == :Infeasible
     
+                # TODO: verify
                 @lazyconstraint(cb, 0 >=
     
                     sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
@@ -504,6 +547,14 @@ function run_lazybenders_lopf(network, solver;
                     sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                     for t=Tr for l=1:N_ext_LN)
+                    +
+                    sum(  duals_flows_upper[t,c+1,l] *(-1)*
+                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                        + duals_flows_lower[t,c+1,l] * 
+                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                    for t=Tr for l=1:N_ext_LN for c in candidates[l])
     
                     + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
                 )

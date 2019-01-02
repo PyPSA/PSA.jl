@@ -522,11 +522,14 @@ function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol)
         size = maximum(keys(x[t]))
         y = zeros(size[3], size[2]+1, size[1])
         for (l,c,ts) in keys(x[t])
-        y[ts,c+1,l] =  x[t][l,c,ts]
+            y[ts,c+1,l] =  x[t][l,c,ts]
         end
         push!(z, y)
     end
     z = vcat(z...)
+    # filter small values
+    z[(z.<1e-3).&(z.>-1e-3)] = 0.0
+    return z
 end
 
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
@@ -572,6 +575,12 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     ST_soc = [hcat(getindex.(sm, :ST_soc_fix)...); hcat(getindex.(sm, :ST_soc_ext)...)]
     ST_spill = [hcat(getindex.(sm, :ST_spill_fix)...); hcat(getindex.(sm, :ST_spill_ext)...)]
 
+    capex_gep_cost = dot(generators[ext_gens_b,:capital_cost], getvalue(m[:G_p_nom]))
+    + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+
+    capex_tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom])) 
+    + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]) 
+
     lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
     orig_gen_order = network.generators[:name]
     generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ]
@@ -579,9 +588,10 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
     stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
 
+    opex_cost = sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], getvalue(G[:,t])) for t=1:T)
+
     # tep costs
     tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom]))
-    println("The cost of transmission network extensions are ",  tep_cost)
 
     # write results
     generators[:p_nom_opt] = deepcopy(generators[:p_nom])
@@ -629,8 +639,8 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     align_component_order!(network)
 
     # print total system code
-    println("Reduce cost to $(m.objVal)")
-    println("Relation of transmission expansion cost to total system cost: $(tep_cost/m.objVal)")
+    println("\nObjective:\t$(m.objVal)")
+    println("TEP share:\t$(tep_cost/m.objVal*100) %")
 
     # co2limit
     generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
@@ -642,7 +652,7 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
         * select_names(network.carriers, [carrier])[:co2_emissions]
         for carrier in network.carriers[:name])
 
-    println("GHG emissions amount to $(co2[1]) t")
+    println("GHG emissions:\t$(co2[1]) t")
     
 
     # renewable energy target
@@ -650,7 +660,7 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / 
     sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
 
-    println("Renewable energy share is $(res*100) %")
+    println("RES share:\t$(res*100) %")
 
 
     # mwkm transmission limit
@@ -674,6 +684,8 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     sum_of_p_max_pu = sum(network.snapshots[:weightings][t]*p_max_pu[t,:] for t=1:T)
     curtailment = 1 - ( sum(sum_of_dispatch) / dot(p_nom_opt,sum_of_p_max_pu) )
 
-    println("The curtailment amounts to $(curtailment*100) %")
+    println("Curtailment:\t$(curtailment*100) %")
+
+    println("")
 
 end

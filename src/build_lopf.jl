@@ -200,16 +200,16 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         if benders != "master"
             if blockstructure || sn>0
                 @constraints(m, begin 
-                    lower_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
-                        resc_factor*G_fix[gr,count] <= resc_factor*p_nom[gr]*p_max_pu(t,gr) 
                     upper_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
+                        resc_factor*G_fix[gr,count] <= resc_factor*p_nom[gr]*p_max_pu(t,gr) 
+                    lower_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
                         resc_factor*p_nom[gr]*p_min_pu(t,gr) <= resc_factor*G_fix[gr,count] 
                 end)
             else
                 @constraints(m, begin 
-                    lower_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
-                        resc_factor*G_fix[gr,t] <= resc_factor*p_nom[gr]*p_max_pu(t,gr) 
                     upper_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
+                        resc_factor*G_fix[gr,t] <= resc_factor*p_nom[gr]*p_max_pu(t,gr) 
+                    lower_bounds_G_fix[gr=1:N_fix_G, t=tcurr],
                         resc_factor*p_nom[gr]*p_min_pu(t,gr) <= resc_factor*G_fix[gr,t] 
                 end)
             end
@@ -356,7 +356,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 
             elseif investment_type == "integer"
 
-                @constraint(m, continuous[l=1:N_ext_LN],
+                @constraint(m, integer[l=1:N_ext_LN],
                     LN_s_nom[l] ==
                     (1.0+LN_inv[l]/lines[ext_lines_b,:num_parallel][l]) * lines[ext_lines_b,:s_nom][l]
                 )
@@ -385,9 +385,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
             elseif investment_type == "integer_bigm"
                 
-                @constraint(m, logical[l=1:N_ext_LN], sum(LN_opt[l,c] for c in candidates[l]) == 1.0)
+                @constraint(m, integer_bigm_logic[l=1:N_ext_LN], sum(LN_opt[l,c] for c in candidates[l]) == 1.0)
 
-                @constraint(m, integer_binary_reformulation[l=1:N_ext_LN],
+                @constraint(m, integer_bigm[l=1:N_ext_LN],
                     LN_s_nom[l] ==
                     (1+sum(c*LN_opt[l,c] for c in candidates[l]) / lines[ext_lines_b,:num_parallel][l])
                     * lines[ext_lines_b,:s_nom][l]
@@ -1181,7 +1181,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             
             carrier_index(carrier) = findin(generators[:carrier], carrier)
     
-            # TODO: needs fixing
             if benders != "master" && sn==0
                 if nrow(network.global_constraints)>0 && in("co2_limit", network.global_constraints[:name])
                     co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
@@ -1266,9 +1265,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
                     rescaling ? resc_factor = 1e-3 : resc_factor = 1
 
-                    # TODO: temporary
-                    #resc_factor = 1e-5
-                    resc_factor = 1
+                    rescaling ? resc_factor = 1e-5 : resc_factor = 1
 
                     if exist_fix_ren_gens
 

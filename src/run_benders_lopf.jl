@@ -2,11 +2,12 @@ using JuMP
 using MathProgBase
 
 # TODO: neglects storage units, storages, and links (!) at the moment!
+
 function run_benders_lopf(network, solver; 
                             formulation::String = "angles_linear",
                             investment_type::String = "continuous",
                             update_x::Bool = false, 
-                            split::Bool = false,
+                            split::Bool = false, 
                             individualcuts::Bool = false,
                             tolerance::Float64 = 1e-1,
                             mip_gap::Float64 = 1e-11,
@@ -24,11 +25,16 @@ function run_benders_lopf(network, solver;
 
     calculate_dependent_values!(network)
     T = nrow(network.snapshots)
-    ext_gens_b = ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
+    ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
     ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
     N_ext_G = sum(ext_gens_b)
     N_ext_LN = sum(ext_lines_b)
     individualcuts ? N_groups = T : N_groups = 1
+    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
+    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
+    candidates = line_extensions_candidates(network)
+
+    scale_fctr = 1e-2
 
     coupled_slave_constrs = [
         :lower_gen_limit,
@@ -37,13 +43,20 @@ function run_benders_lopf(network, solver;
         :upper_line_limit
         # TODO: add links
         ]
+
+    if investment_type=="integer_bigm"
+        push!(coupled_slave_constrs, :flows_upper)
+        push!(coupled_slave_constrs, :flows_lower)
+    end
     
+    # build master model
     model_master = build_lopf(network, solver,
         benders="master",
         investment_type=investment_type,
         N_groups=N_groups
     )
 
+    # build slave models
     models_slave = JuMP.Model[]
     if !split
         push!(models_slave, 
@@ -66,12 +79,7 @@ function run_benders_lopf(network, solver;
     N_sub = length(models_slave)
         
     uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
-    vars_master = getvariables(model_master)
-    vars_slave = getvariables(first(models_slave))
     
-    p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
-    p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
-            
     iteration = 1
     inexact_iterations > 0 ? initial_mip_gap=inexact_mip_gap : initial_mip_gap = mip_gap
     inexact_iterations > 0 ? push!(solver.options, (:MIPGap, initial_mip_gap)) : nothing
@@ -85,13 +93,13 @@ function run_benders_lopf(network, solver;
     while(iteration <= max_iterations)
 
         push!(mem_master,Base.summarysize(model_master)/1e6)
-        
+       
         status_master = solve(model_master, relaxation=relax);
 
         # cases of master problem
         if status_master == :Infeasible
 
-            # println("The problem is infeasible.")
+            println("The problem is infeasible.")
             break
 
         elseif status_master == :Unbounded
@@ -99,10 +107,6 @@ function run_benders_lopf(network, solver;
             objective_master_current = -bigM
             G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
             LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
-            
-            # objective_master_current = bigM
-            # G_p_nom_current = network.generators[ext_gens_b,:][:p_nom_max]
-            # LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom_max]
             
             LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:]))
             setvalue(model_master[:ALPHA], -bigM)
@@ -112,10 +116,7 @@ function run_benders_lopf(network, solver;
             objective_master_current = getobjectivevalue(model_master)
             G_p_nom_current = getvalue(model_master[:G_p_nom])
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
-            LN_inv_current = getvalue(model_master[:LN_inv])
-
-            # inactive cut removal
-            # TODO: can be supported with MathOptInterface
+            investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
 
         else
             error("Odd status of master problem: $status_master")
@@ -126,14 +127,6 @@ function run_benders_lopf(network, solver;
                 LN_s_nom_current[l] = (1.0+ceil(LN_inv_current[l])/network.lines[ext_lines_b,:num_parallel][l]) * network.lines[ext_lines_b,:s_nom][l]
             end
         end
-
-        # # for debugging
-        # println("Status of the master problem is ", status_master, 
-        # "\nwith objective_master_current = ", objective_master_current, 
-        # "\nG_p_nom_current = ", G_p_nom_current,
-        # "\nLN_s_nom_current = ", LN_s_nom_current,
-        # "\nalpha = ", getvalue(model_master[:ALPHA]))
-        # investment_type=="integer" ? @show(LN_inv_current) : nothing
      
         # adapt RHS of slave model with solution from master problem
         model_slave = models_slave[1]
@@ -161,45 +154,49 @@ function run_benders_lopf(network, solver;
                     model_slave[:upper_line_limit][t,l],
                     network.lines[ext_lines_b,:s_max_pu][l]*LN_s_nom_current[l]
                 )
+
+                if investment_type=="integer_bigm"
+                    for c in candidates[l]
+                        JuMP.setRHS(
+                            model_slave[:flows_upper][l,c,t],
+                            (((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6))*(LN_opt_current[l,c]-1) 
+                        )
+                        JuMP.setRHS(
+                            model_slave[:flows_lower][l,c,t],
+                            (((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                            (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt_current[l,c]) 
+                        )
+                    end
+                end
+
             end
 
         end
 
-        # if update_x
-        #     network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
-        #     model_slave = build_lopf(network, solver, 
-        #         benders="slave",
-        #         formulation=formulation
-        #     )
-        # end
+        if update_x
+            network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
+            model_slave = build_lopf(network, solver, 
+                benders="slave",
+                formulation=formulation
+            )
+        end
 
         statuses_slave = Symbol[]
         for i=1:N_sub
             push!(statuses_slave, solve(models_slave[i])) 
         end
         status_slave = minimum(statuses_slave)
-        
-        # # for debugging
-        # if iteration == 1
-        #     for i=1:length(models_slave)
-        #         println(models_slave[i])
-        #         @show(getvalue(models_slave[i][:G_ext]))
-        #         @show(getvalue(models_slave[i][:G_fix]))
-        #         @show(getobjectivevalue(models_slave[i]))
-        #     end
-        # end
 
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_sub)
         duals_lower_gen_limit = getduals(models_slave, :lower_gen_limit)
         duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
         duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
         duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
-
-        # # for debugging
-        # println("Status of the slaveproblem is ", status_slave, 
-        # "\nwith GAP ", objective_slave_current - getvalue(model_master[:ALPHA]),
-        # "\nobjective_slave_current = ", objective_slave_current, 
-        # "\nALPHA = ", getvalue(model_master[:ALPHA]))
+        if investment_type=="integer_bigm"
+            duals_flows_upper = getduals_bigm(models_slave, :flows_upper)
+            duals_flows_lower = getduals_bigm(models_slave, :flows_lower)
+        end
 
         ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_groups)
 
@@ -208,7 +205,7 @@ function run_benders_lopf(network, solver;
             relax = false
         end
 
-        if objective_slave_current - ALPHA_current <= inexact_threshold || inexact_iterations == iteration
+        if inexact_iterations!=0 && (objective_slave_current - ALPHA_current <= inexact_threshold || inexact_iterations == iteration)
             println("Drop inexact solutions!")
             println(mip_gap)
             push!(solver.options, (:MIPGap, mip_gap))
@@ -217,6 +214,10 @@ function run_benders_lopf(network, solver;
         # cases of slave problem
         if (status_slave == :Optimal && 
             objective_slave_current - ALPHA_current <= tolerance)
+
+            push!(lbs, ALPHA_current)
+            push!(ubs, objective_slave_current)
+            println("$iteration\t$(objective_slave_current - ALPHA_current)")
 
             println("Optimal solution of the original problem found")
             println("The optimal objective value is ", objective_master_current)
@@ -238,43 +239,102 @@ function run_benders_lopf(network, solver;
             if (status_slave == :Optimal &&
                 objective_slave_current - ALPHA_current > tolerance)
 
-                # # for debugging
-                # @show(get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs))
-    
                 # println("\nThere is a suboptimal vertex, add the corresponding constraint")
-                @constraint(model_master, model_master[:ALPHA][cntr] >=
-                
-                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                    for t=Tr for gr=1:N_ext_G)
-                    + 
-                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    for t=Tr for l=1:N_ext_LN)
-    
-                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
-                
-                )
+
+                if investment_type!="integer_bigm"
+                    @constraint(model_master, model_master[:ALPHA][cntr] >=
+                    
+                        sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                    
+                    )
+
+                else
+
+                    if maximum(values(getdual(models_slave[1][:slack]))) > 1e-4
+                        error("Need to consider slack")
+                    end
+
+                    @constraint(model_master, scale_fctr*model_master[:ALPHA][cntr] >=
+
+                        scale_fctr*(
+                    
+                        sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_flows_upper[t,c+1,l] * (-1) *
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                            + duals_flows_lower[t,c+1,l] * 
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                        for t=Tr for l=1:N_ext_LN  for c in candidates[l])
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                        )
+                    )
+                end
             end
             
             if status_slave == :Infeasible
-    
+
                 # println("\nThere is an  extreme ray, adding the corresponding constraint")
+
+                if investment_type!="integer_bigm"
+
+                    @constraint(model_master, 0 >=
+        
+                        sum(  duals_lower_gen_limit[t,gr] * (-1) * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                    )
+                else
+                    
+                    @constraint(model_master, 0 >=
+        
+                        scale_fctr*(
+
+                        sum(  duals_lower_gen_limit[t,gr] * (-1) * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_flows_upper[t,c+1,l] * (-1)*
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                            + duals_flows_lower[t,c+1,l] * 
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                        for t=Tr for l=1:N_ext_LN for c in candidates[l])
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                        )
+                    )
+                end
                 
-                @constraint(model_master, 0 >=
-    
-                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                    for t=Tr for gr=1:N_ext_G)
-                    + 
-                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    for t=Tr for l=1:N_ext_LN)
-    
-                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
-                )
             end
-            
+
         end
 
         push!(lbs, ALPHA_current)
@@ -305,10 +365,8 @@ function run_lazybenders_lopf(network, solver;
     tolerance::Float64 = 1e-1,
     mip_gap::Float64 = 1e-10,
     bigM::Float64 = 1e12,
-    update_x::Bool = false
+    update_x::Bool = false # TODO: integer bigm does not support update_x option
     )
-
-    # TODO: integer bigm does not support update_x option
 
     # sanity checks
     investment_type=="integer_bigm" && formulation!="angles_linear_integer_bigm" ? error("Investment type $investment_type requires formulation <angles_linear_integer_bigm>, not $formulation!") : nothing
@@ -470,22 +528,16 @@ function run_lazybenders_lopf(network, solver;
         end
         status_slave = minimum(statuses_slave)
 
-        # # for debugging
-        # if status_slave == :Infeasible
-        #     iis = get_iis(models_slave[1])
-        #     for i in iis
-        #         println(i)
-        #     end
-        # end
-
         # get results
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_sub)
         duals_lower_gen_limit = getduals(models_slave, :lower_gen_limit)
         duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
         duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
         duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
-        duals_flows_upper = getduals_bigm(models_slave, :flows_upper)
-        duals_flows_lower = getduals_bigm(models_slave, :flows_lower)
+        if investment_type=="integer_bigm"
+            duals_flows_upper = getduals_bigm(models_slave, :flows_upper)
+            duals_flows_lower = getduals_bigm(models_slave, :flows_lower)
+        end
 
         ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_groups)
 
@@ -512,52 +564,88 @@ function run_lazybenders_lopf(network, solver;
             if (status_slave == :Optimal &&
                 objective_slave_current - ALPHA_current > tolerance)
 
-                # TODO: verify
-                @lazyconstraint(cb, model_master[:ALPHA][cntr] >=
-                
-                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                    for t=Tr for gr=1:N_ext_G)
-                    + 
-                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    for t=Tr for l=1:N_ext_LN)
-                    +
-                    sum(  duals_flows_upper[t,c+1,l] * (-1) *
-                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
-                            (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
-                        + duals_flows_lower[t,c+1,l] * 
-                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
-                            (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
-                    for t=Tr for l=1:N_ext_LN  for c in candidates[l])
-    
-                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
-                )
+                if investment_type!="integer_bigm"
+                    @lazyconstraint(cb, model_master[:ALPHA][cntr] >=
+                    
+                        sum(  duals_lower_gen_limit[t,gr] * (-1) *p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                    )
+                    
+                else
+                    @lazyconstraint(cb, model_master[:ALPHA][cntr] >=
+                    
+                        sum(  duals_lower_gen_limit[t,gr] * (-1) *p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_flows_upper[t,c+1,l] * (-1)*
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                            + duals_flows_lower[t,c+1,l] * 
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                        for t=Tr for l=1:N_ext_LN  for c in candidates[l])
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                    )
+
+                end
+
             end
             
             if status_slave == :Infeasible
+
+                if investment_type!="integer_bigm"
+        
+                    @lazyconstraint(cb, 0 >=
+        
+                        sum(  duals_lower_gen_limit[t,gr] * (-1) *p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                    )
+                    
+                else
+                    @lazyconstraint(cb, 0 >=
+        
+                        sum(  duals_lower_gen_limit[t,gr] * (-1) *p_min_pu(t,gr) * model_master[:G_p_nom][gr]
+                            + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                        for t=Tr for gr=1:N_ext_G)
+                        + 
+                        sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                            + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                        for t=Tr for l=1:N_ext_LN)
+                        +
+
+                        sum(  duals_flows_upper[t,c+1,l] * (-1)*
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                            + duals_flows_lower[t,c+1,l] * 
+                                ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
+                                (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
+                        for t=Tr for l=1:N_ext_LN for c in candidates[l])
+        
+                        + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
+                    )
+                    
+                end
     
-                # TODO: verify
-                @lazyconstraint(cb, 0 >=
-    
-                    sum(  duals_lower_gen_limit[t,gr] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                        + duals_upper_gen_limit[t,gr] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                    for t=Tr for gr=1:N_ext_G)
-                    + 
-                    sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                        + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                    for t=Tr for l=1:N_ext_LN)
-                    +
-                    sum(  duals_flows_upper[t,c+1,l] *(-1)*
-                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
-                            (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
-                        + duals_flows_lower[t,c+1,l] * 
-                            ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
-                            (minimum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 
-                    for t=Tr for l=1:N_ext_LN for c in candidates[l])
-    
-                    + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
-                )
             end
             
         end

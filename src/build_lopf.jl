@@ -412,44 +412,69 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
         #  3.3 set link variables
         if benders != "master"
-            @constraints(m, begin 
-                lower_bounds_LK_fix[l=1:N_fix_LK,t=counter],
-                    (links[fix_links_b, :p_nom].*links[fix_links_b, :p_min_pu])[l] <=  LK_fix[l,t]
-                upper_bounds_LK_fix[l=1:N_fix_LK,t=counter],
-                    LK_fix[l,t] <= (links[fix_links_b, :p_nom].*links[fix_links_b, :p_max_pu])[l]
-            end)
+
+            if blockstructure || sn > 0
+                @constraints(m, begin 
+                    lower_bounds_LK_fix[l=1:N_fix_LK,t=tcurr],
+                        links[fix_links_b, :p_nom][l]*links[fix_links_b, :p_min_pu][l] <=  LK_fix[l,count]
+                    upper_bounds_LK_fix[l=1:N_fix_LK,t=tcurr],
+                        LK_fix[l,count] <= links[fix_links_b, :p_nom][l]*links[fix_links_b, :p_max_pu][l]
+                end)
+            else
+                @constraints(m, begin 
+                    lower_bounds_LK_fix[l=1:N_fix_LK,t=tcurr],
+                        links[fix_links_b, :p_nom][l]*links[fix_links_b, :p_min_pu][l] <=  LK_fix[l,t]
+                    upper_bounds_LK_fix[l=1:N_fix_LK,t=tcurr],
+                        LK_fix[l,t] <= links[fix_links_b, :p_nom][l]*links[fix_links_b, :p_max_pu][l]
+                end)
+            end
         end
 
         if benders != "slave" && count==nt
+
             @constraints(m, begin 
                 lower_bounds_LK_p_nom[l=1:N_ext_LK],
-                    links[ext_links_b, :p_nom_min][l] <=  LK_p_nom[l]
+                    LK_p_nom[l] >= links[ext_links_b, :p_nom_min][l]
                 upper_bounds_LK_p_nom[l=1:N_ext_LK],
                     LK_p_nom[l] <= links[ext_links_b, :p_nom_max][l]
             end)
         end
 
-        # 3.4 set constraints for extendable links
+        # # 3.4 set constraints for extendable links
         if benders != "master" && benders != "slave"
 
             @constraints(m, begin
 
-                lower_link_limit[t=counter,l=1:N_ext_LK],
-                    LK_ext[l,t] >= LK_p_nom[l].*links[ext_links_b, :p_min_pu][l]
+                lower_link_limit[t=tcurr,l=1:N_ext_LK],
+                    LK_ext[l,t] >= LK_p_nom[l]*links[ext_links_b, :p_min_pu][l]
 
                 upper_link_limit[t=tcurr,l=1:N_ext_LK],
-                    LK_ext[l,t] <= LK_p_nom[l].*links[ext_links_b, :p_max_pu][l]
+                    LK_ext[l,t] <= LK_p_nom[l]*links[ext_links_b, :p_max_pu][l]
             end)
 
         elseif benders == "slave"
 
-            @constraint(m, lower_link_limit[t=counter,l=1:N_ext_LK],
-                    LK_ext[l,t] >= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_min_pu][l]
-            )
+            if blockstructure || sn > 0
 
-            @constraint(m, upper_link_limit[t=counter,l=1:N_ext_LK],
-                    LK_ext[l,t] <= links[ext_links_b,:p_nom][l].*links[ext_links_b, :p_max_pu][l]
-            )
+                @constraint(m, lower_link_limit[t=tcurr,l=1:N_ext_LK],
+                    LK_ext[l,count] >= links[ext_links_b,:p_nom][l]*links[ext_links_b, :p_min_pu][l]
+                )
+
+                @constraint(m, upper_link_limit[t=tcurr,l=1:N_ext_LK],
+                    LK_ext[l,count] <= links[ext_links_b,:p_nom][l]*links[ext_links_b, :p_max_pu][l]
+                )
+
+            else 
+
+                @constraint(m, lower_link_limit[t=tcurr,l=1:N_ext_LK],
+                    LK_ext[l,t] >= links[ext_links_b,:p_nom][l]*links[ext_links_b, :p_min_pu][l]
+                )
+
+                @constraint(m, upper_link_limit[t=tcurr,l=1:N_ext_LK],
+                    LK_ext[l,t] <= links[ext_links_b,:p_nom][l]*links[ext_links_b, :p_max_pu][l]
+                )
+
+            end
 
         end
 
@@ -1205,6 +1230,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 end
             end
     
+            # TODO: needs fixing
             # 7.3 specified percentage of renewable energy generation
             # sum of renewable generation =/>= percentage * sum of total load
             if benders != "master" && sn==0

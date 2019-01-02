@@ -1,7 +1,8 @@
 using JuMP
 using MathProgBase
 
-# TODO: neglects storage units, storages, and links (!) at the moment!
+# TODO: neglects storage units, storages at the moment!
+# TODO: keep an eye on sign of duals_upper_link_limit benderscut
 
 function run_benders_lopf(network, solver; 
                             formulation::String = "angles_linear",
@@ -27,8 +28,10 @@ function run_benders_lopf(network, solver;
     T = nrow(network.snapshots)
     ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
     ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
+    ext_links_b = convert(BitArray, network.links[:p_nom_extendable])
     N_ext_G = sum(ext_gens_b)
     N_ext_LN = sum(ext_lines_b)
+    N_ext_LK = sum(ext_links_b)
     individualcuts ? N_groups = T : N_groups = 1
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
@@ -40,8 +43,9 @@ function run_benders_lopf(network, solver;
         :lower_gen_limit,
         :upper_gen_limit,
         :lower_line_limit,
-        :upper_line_limit
-        # TODO: add links
+        :upper_line_limit,
+        :lower_link_limit,
+        :upper_link_limit
         ]
 
     if investment_type=="integer_bigm"
@@ -107,6 +111,7 @@ function run_benders_lopf(network, solver;
             objective_master_current = -bigM
             G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
             LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
+            LK_p_nom_current = network.links[ext_links_b,:][:p_nom]
             
             LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:]))
             setvalue(model_master[:ALPHA], -bigM)
@@ -116,6 +121,7 @@ function run_benders_lopf(network, solver;
             objective_master_current = getobjectivevalue(model_master)
             G_p_nom_current = getvalue(model_master[:G_p_nom])
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
+            LK_p_nom_current = getvalue(model_master[:LK_p_nom])
             investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
 
         else
@@ -172,6 +178,17 @@ function run_benders_lopf(network, solver;
 
             end
 
+            for l=1:N_ext_LK
+                JuMP.setRHS(
+                    model_slave[:lower_link_limit][t,l],
+                    LK_p_nom_current[l]*network.links[ext_links_b, :p_min_pu][l]
+                )
+                JuMP.setRHS(
+                    model_slave[:upper_link_limit][t,l],
+                    LK_p_nom_current[l]*network.links[ext_links_b, :p_max_pu][l]
+                )
+            end
+
         end
 
         if update_x
@@ -193,6 +210,8 @@ function run_benders_lopf(network, solver;
         duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
         duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
         duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
+        duals_lower_link_limit = getduals(models_slave, :lower_link_limit)
+        duals_upper_link_limit = getduals(models_slave, :upper_link_limit)
         if investment_type=="integer_bigm"
             duals_flows_upper = getduals_bigm(models_slave, :flows_upper)
             duals_flows_lower = getduals_bigm(models_slave, :flows_lower)
@@ -251,6 +270,10 @@ function run_benders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
         
                         + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
                     
@@ -273,6 +296,10 @@ function run_benders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
                         +
                         sum(  duals_flows_upper[t,c+1,l] * (-1) *
                                 ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
@@ -303,6 +330,10 @@ function run_benders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
         
                         + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
                     )
@@ -319,6 +350,10 @@ function run_benders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
                         +
                         sum(  duals_flows_upper[t,c+1,l] * (-1)*
                                 ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
@@ -376,8 +411,10 @@ function run_lazybenders_lopf(network, solver;
     T = nrow(network.snapshots)
     ext_gens_b = ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
     ext_lines_b = convert(BitArray, network.lines[:s_nom_extendable])
+    ext_links_b = convert(BitArray, network.links[:p_nom_extendable])
     N_ext_G = sum(ext_gens_b)
     N_ext_LN = sum(ext_lines_b)
+    N_ext_LK = sum(ext_links_b)
     individualcuts ? N_groups = T : N_groups = 1
     p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=ext_gens_b)
     p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=ext_gens_b)
@@ -388,7 +425,9 @@ function run_lazybenders_lopf(network, solver;
         :lower_gen_limit,
         :upper_gen_limit,
         :lower_line_limit,
-        :upper_line_limit
+        :upper_line_limit,
+        :lower_link_limit,
+        :upper_link_limit
         ]
 
     if investment_type=="integer_bigm"
@@ -437,6 +476,7 @@ function run_lazybenders_lopf(network, solver;
         objective_master_current = getobjectivevalue(model_master)
         G_p_nom_current = getvalue(model_master[:G_p_nom])
         LN_s_nom_current = getvalue(model_master[:LN_s_nom])
+        LK_p_nom_current = getvalue(model_master[:LK_p_nom])
         investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
 
         candidates = line_extensions_candidates(network)
@@ -519,6 +559,18 @@ function run_lazybenders_lopf(network, solver;
                     end
                 end
             end
+
+            for l=1:N_ext_LK
+                JuMP.setRHS(
+                    model_slave[:lower_link_limit][t,l],
+                    LK_p_nom_current[l]*network.links[ext_links_b, :p_min_pu][l]
+                )
+                JuMP.setRHS(
+                    model_slave[:upper_link_limit][t,l],
+                    LK_p_nom_current[l]*network.links[ext_links_b, :p_max_pu][l]
+                )
+            end
+
         end
 
         # solve subproblems
@@ -534,6 +586,8 @@ function run_lazybenders_lopf(network, solver;
         duals_upper_gen_limit = getduals(models_slave, :upper_gen_limit)
         duals_lower_line_limit = getduals(models_slave, :lower_line_limit)
         duals_upper_line_limit = getduals(models_slave, :upper_line_limit)
+        duals_lower_link_limit = getduals(models_slave, :lower_link_limit)
+        duals_upper_link_limit = getduals(models_slave, :upper_link_limit)
         if investment_type=="integer_bigm"
             duals_flows_upper = getduals_bigm(models_slave, :flows_upper)
             duals_flows_lower = getduals_bigm(models_slave, :flows_lower)
@@ -574,6 +628,10 @@ function run_lazybenders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * (-1) * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
         
                         + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
                     )
@@ -588,6 +646,10 @@ function run_lazybenders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
                         +
                         sum(  duals_flows_upper[t,c+1,l] * (-1)*
                                 ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
@@ -617,6 +679,10 @@ function run_lazybenders_lopf(network, solver;
                         sum(  duals_lower_line_limit[t,l] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
+                        +
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
         
                         + get_benderscut_constant(models_slave[cnt],uncoupled_slave_constrs)
                     )
@@ -632,7 +698,10 @@ function run_lazybenders_lopf(network, solver;
                             + duals_upper_line_limit[t,l] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                         for t=Tr for l=1:N_ext_LN)
                         +
-
+                        sum(  duals_lower_link_limit[t,l] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                            + duals_upper_link_limit[t,l] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                        for t=Tr for l=1:N_ext_LK)
+                        +
                         sum(  duals_flows_upper[t,c+1,l] * (-1)*
                                 ((maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:s_nom][l] +
                                 (maximum(candidates[l]./network.lines[:num_parallel][l])+1)*network.lines[:x_pu][l]^(-1)*pi/6)*(1-model_master[:LN_opt][l,c]) 

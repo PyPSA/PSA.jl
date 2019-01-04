@@ -542,7 +542,7 @@ end
 getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
 
 # TODO: verify
-function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol)
+function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
     x=getdual(getindex.(m, cnstr))
     z = []
     for t=1:length(x)
@@ -555,7 +555,7 @@ function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol)
     end
     z = vcat(z...)
     # filter small values
-    z[(z.<1e-3).&(z.>-1e-3)] = 0.0
+    filter_b ? z[(z.<1e-3).&(z.>-1e-3)] = 0.0 : nothing
     return z
 end
 

@@ -461,6 +461,33 @@ function line_extensions_candidates(network)
     return candidates
 end
 
+# TODO: test functionality
+function bigm(cnstr::Symbol, network; max_angle_diff::Float64=pi/6)
+                
+    lines = network.lines
+    candidates = line_extensions_candidates(network)
+    init_c = lines[:num_parallel]
+    init_x = lines[:x_pu]
+    init_s_nom = lines[:s_nom]
+    max_c = maximum.(candidates)
+
+    if cnstr == :flows_upper
+        extreme_c = minimum.(candidates)
+    elseif cnstr == :flows_lower
+        extreme_c = maximum.(candidates)
+    else
+        error("Function bigm(.) not defined for constraint $constr.")
+    end
+    
+    bigm = ( extreme_c ./ init_c .+ 1) .* ( max_angle_diff ./ init_x ) 
+        .+ ( max_c ./ init_c .+ 1 ) .* init_s_nom 
+    
+    length(bigm) != nrow(lines) ? error("Sizes of Big-M parameter and number of lines do not match!") : nothing
+    
+    return bigm
+
+end
+
 function getvariables(m::JuMP.Model)
     return [k for (k,v) in m.objDict 
              if issubtype(eltype(v), JuMP.Variable) &&

@@ -836,9 +836,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
             elseif formulation == "angles_linear_integer_bigm"
 
-                #bigM_upper = maximum(candidates[l])*lines[:s_nom][l] + maximum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-                #bigM_lower = maximum(candidates[l])*lines[:s_nom][l] + minimum(candidates[l])*lines[:x_pu][l]^(-1)*pi/6
-                
+                bigm_upper = bigm(:flows_upper, network)
+                bigm_lower = bigm(:flows_lower, network)
+
                 rescaling ? resc_factor = 1 : resc_factor = 1
 
                 # load data in correct order
@@ -864,18 +864,20 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
                     @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=counter],
                         resc_factor * (
-                        (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] +
-                        (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(1-LN_opt[l,c]) 
-                        + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
-                        *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t]) >= 0
+                            bigm_upper*(1-LN_opt[l,c]) 
+                            + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) ) * 
+                              ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
+                            - LN[l,t]
+                        ) >= 0
                     )
 
                     @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=counter],
                         resc_factor * (
-                        (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] 
-                        + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(LN_opt[l,c]-1) 
-                        + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
-                        *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t]) <= 0
+                            bigm_lower*(LN_opt[l,c]-1) 
+                            + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) ) * 
+                              ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
+                            - LN[l,t]
+                        ) <= 0
                     )
 
                     @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=counter],
@@ -905,18 +907,20 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
                         @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=counter],
                             resc_factor * (
-                            (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] +
-                            (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(c == 0 ? 0 : 1) 
-                            + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
-                            *( THETA[busidx[lines[:bus0][l]], count] - THETA[busidx[lines[:bus1][l]], count]) - LN[l,count]) >= 0
+                                bigm_upper*(c == 0 ? 0 : 1) 
+                                + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
+                                  *( THETA[busidx[lines[:bus0][l]], count] - THETA[busidx[lines[:bus1][l]], count]) 
+                                - LN[l,count]
+                            ) >= 0
                         )
         
                         @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=counter],
                             resc_factor * (
-                            (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] 
-                            + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(c == 0 ? 0 : -1) 
-                            + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
-                            *( THETA[busidx[lines[:bus0][l]], count] - THETA[busidx[lines[:bus1][l]], count]) - LN[l,count]) <= 0
+                                bigm_lower*(c == 0 ? 0 : -1) 
+                                + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
+                                  *( THETA[busidx[lines[:bus0][l]], count] - THETA[busidx[lines[:bus1][l]], count]) 
+                                  - LN[l,count]
+                            ) <= 0
                         )
 
                         @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=counter],
@@ -944,18 +948,20 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
                         @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=tcurr],
                             resc_factor * (
-                            (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] +
-                            (maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(c == 0 ? 0 : 1) 
-                            + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
-                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t]) >= 0
+                                bigm_upper*(c == 0 ? 0 : 1) 
+                                + ( ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) )
+                                  *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+                                - LN[l,t]
+                            ) >= 0
                         )
         
                         @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=tcurr],
                             resc_factor * (
-                            (((maximum(candidates[l]./lines[:num_parallel][l])+1)*lines[:s_nom][l] 
-                            + (minimum(candidates[l]./lines[:num_parallel][l])+1)*lines[:x_pu][l]^(-1)*pi/6))*(c == 0 ? 0 : -1) 
-                            + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
-                            *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t]) - LN[l,t]) <= 0
+                                bigm_lower*(c == 0 ? 0 : -1) 
+                                + ( ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) )
+                                  *( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t])
+                                - LN[l,t]
+                            ) <= 0
                         )
 
                         @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=tcurr],

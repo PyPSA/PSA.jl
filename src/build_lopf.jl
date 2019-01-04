@@ -227,7 +227,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         if benders != "slave" && count==nt
             @constraints(m, begin 
                 lower_bounds_G_p_nom[gr=1:N_ext_G],
-                    0 <= G_p_nom[gr]
+                    p_nom_min[gr] <= G_p_nom[gr]
                 upper_bounds_G_p_nom[gr=1:N_ext_G],
                     G_p_nom[gr] <= p_nom_max[gr]
             end)

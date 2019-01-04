@@ -1234,7 +1234,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     mwkm_limit = network.global_constraints[network.global_constraints[:name].=="mwkm_limit", :constant]
                     #println("Line expansion limit is $(mwkm_limit[1]) times current MWkm")
                     @constraint(m, mwkmlimit, 
-                        dot(LN_s_nom,lines[:length]) <= mwkm_limit[1] * dot(lines[:s_nom],lines[:length])
+                        dot(LN_s_nom,lines[:length]) <= mwkm_limit[1] * dot(lines[ext_lines_b,:s_nom],lines[:length])
                     )
                 end
             end

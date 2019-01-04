@@ -6,8 +6,7 @@ include("utils.jl")
 function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles_linear",
                     investment_type::String="continuous",
                     blockmodel::Bool=false, benders::String="", snapshot_number=0, N_groups=1, blockstructure::Bool=false)
-    
-                    
+
     # This function is organized as the following:
     #
     # 0.        Initialize model
@@ -76,6 +75,10 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     N_fix_ST = sum(.!stores[:e_nom_extendable])
     N_ext_ST = sum(.!(.!stores[:e_nom_extendable]))
     N_ST = N_fix_ST + N_ext_ST
+    
+    if N_ext_LN > 0
+        error("Code currently only works if all lines are extendable lines!")
+    end
     
     if N_com_G > 0
         println("WARNING, no unit commitment yet")

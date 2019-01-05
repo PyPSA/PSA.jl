@@ -562,11 +562,11 @@ end
 function rescaling_factors(rescaling::Bool)
     # TODO: adapt rescaling factors
     dict Dict(
-        :approx_restarget => 1e-3
+        :approx_restarget => 1e-3,
         :bounds_G => 1e4,
         :bounds_LN => 1e3,
         :bounds_LK => 1e2,
-        :flows => 1,
+        :flows => 1
     )
     !rescaling ? for k in keys(dict) dict[k] = 1 end : nothing
     return dict

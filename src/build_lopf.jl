@@ -30,12 +30,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     snapshot_number>0 && benders!="slave" ? error("Can only specify one single snapshot for slave-subproblem!") : nothing
     blockmodel && benders!="" ? error("Can either do manual benders decomposition or use BlockDecomposition.jl!") : nothing
     
-    # TODO: temporarily disable rescaling
-    if rescaling
-        rescaling = false
-        println("Disabled rescaling contrary to setting!")
-    end
-
     rf = 1
     rescaling_dict = rescaling_factors(rescaling)
 

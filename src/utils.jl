@@ -561,7 +561,7 @@ end
 
 function rescaling_factors(rescaling::Bool)
     # TODO: adapt rescaling factors
-    dict Dict(
+    dict = Dict(
         :approx_restarget => 1e-3,
         :bounds_G => 1e4,
         :bounds_LN => 1e3,

@@ -949,7 +949,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         
                         @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=counter],
                             rf * (
-                                ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) ) * 
+                                ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                                 ( THETA[busidx[lines[:bus0][l]], count] - THETA[busidx[lines[:bus1][l]], count] ) 
                                 - LN[l,count]
                             ) <= rf * bigm_lower * (c == 0 ? 0 : 1)

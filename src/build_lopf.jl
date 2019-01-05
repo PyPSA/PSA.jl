@@ -36,7 +36,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         println("Disabled rescaling contrary to setting!")
     end
 
-    resc_factor = 1
+    rf = 1
+    rescaling_dict = rescaling_factors(rescaling)
 
     N = nrow(network.buses)
     L = nrow(network.lines)
@@ -196,7 +197,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)
         p_nom = network.generators[fix_gens_b,:p_nom]
 
-        rescaling ? resc_factor = 1e4 : resc_factor = 1
+        rf = rescaling_dict[:bounds_G]
         
         if benders != "master"
             if blockstructure || sn>0
@@ -278,6 +279,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         fix_lines_b = (.!lines[:s_nom_extendable])
         ext_lines_b = .!fix_lines_b
 
+        rf = rescaling_dict[:bounds_LN]
+
         # 2.3 add variables
         if benders != "master"
             @constraints(m, begin 
@@ -299,8 +302,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         
         # 2.4 add line constraint for extendable lines
         #println("-- 2.4 add line constraint for extendable lines")
-
-        rescaling ? resc_factor = 1e3 : nothing
 
         if benders != "master" && benders != "slave"
 
@@ -404,6 +405,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
     # 3. add all links to the model
         #println("Adding links to the model.")
+
+        rf = rescaling_dict[:bounds_LK]
 
         # 3.1 set different link types
         links = network.links
@@ -778,6 +781,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # 6. power flow formulations
 
         #println("Adding power flow formulation $formulation to the model.")
+
+        rf = rescaling_dict[:flows]
 
         if benders != "master"
 
@@ -1293,9 +1298,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     exist_fix_ren_gens ? def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix : nothing
                     def_p_max_pu_ext[loc_ext_b] .= sum_of_p_max_pu_ext
 
-                    rescaling ? resc_factor = 1e-3 : resc_factor = 1
-
-                    rescaling ? resc_factor = 1e-5 : resc_factor = 1
+                    rf = rescaling_dict[:approx_restarget]
 
                     if exist_fix_ren_gens
 

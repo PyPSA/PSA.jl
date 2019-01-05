@@ -40,12 +40,12 @@ function run_benders_lopf(network, solver;
     scale_fctr = 1e-2
 
     coupled_slave_constrs = [
-        :lower_gen_limit,
-        :upper_gen_limit,
-        :lower_line_limit,
-        :upper_line_limit,
-        :lower_link_limit,
-        :upper_link_limit
+        :lower_bounds_G_ext,
+        :upper_bounds_G_ext,
+        :lower_bounds_L_ext,
+        :upper_bounds_L_ext,
+        :lower_bounds_LK_ext,
+        :upper_bounds_LK_ext
         ]
 
     if investment_type=="integer_bigm"

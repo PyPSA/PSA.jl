@@ -559,6 +559,19 @@ function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=fal
     return z
 end
 
+function rescaling_factors(rescaling::Bool)
+    # TODO: adapt rescaling factors
+    dict Dict(
+        :approx_restarget => 1e-3
+        :bounds_G => 1e4,
+        :bounds_LN => 1e3,
+        :bounds_LK => 1e2,
+        :flows => 1,
+    )
+    !rescaling ? for k in keys(dict) dict[k] = 1 end : nothing
+    return dict
+end
+
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 
     joint ? sm = m : nothing

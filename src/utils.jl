@@ -572,6 +572,11 @@ function rescaling_factors(rescaling::Bool)
     return dict
 end
 
+function filter_timedependent_extremes!(z::DataFrames.DataFrame, threshold::Float64)
+    for c in z.columns c[(c.<0.5).&(c.!=0)] = 0.5 end
+    return z
+end
+
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 
     joint ? sm = m : nothing

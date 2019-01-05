@@ -192,6 +192,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         p_max_pu = get_switchable_as_dense(network, "generators", "p_max_pu")
         p_min_pu = get_switchable_as_dense(network, "generators", "p_min_pu")
 
+        filter_timedependent_extremes!(p_max_pu, 0.01)
+        filter_timedependent_extremes!(p_min_pu, 0.01)
+
         # 1.3a add non-extendable generator variables to the model
         p_min_pu = select_time_dep(network, "generators", "p_min_pu",components=fix_gens_b)
         p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)

@@ -17,21 +17,7 @@ PSA.jl can import the network and work with it.
 
 So far the following functionality is implemented in PSA.jl:
 
-* Import from CSV folder
-* Export to CSV folder
-* Most features of Linear Optimal Power Flow (LOPF), i.e. total electricity/energy system least-cost investment optimisation
-
-What is not yet implemented, but coming soon:
-
-* Normal power flow
-* Unit commitment
-* Stores
-* LOPF with non-unity snapshot weightings
-* Links with more than one output
-* Standing losses in storage
-* Some time-dependent efficiencies and max/min limits
-* Import/Export from/to NetCDF
-
+* TODO...
 
 ## Required packages
 
@@ -39,7 +25,6 @@ What is not yet implemented, but coming soon:
 * CSV.jl
 * LightGraphs.jl
 * DataFrames.jl
-* PyCall.jl
 * Gurobi.jl
 
 ## Basic usage
@@ -60,7 +45,7 @@ using Clp
 
 solver = ClpSolver()
 
-m = PSA.lopf(network, solver)
+m = PSA.run_lopf(network, solver)
 
 print(m.objVal)
 ```
@@ -68,7 +53,7 @@ print(m.objVal)
 
 ## Licence
 
-Copyright 2017-2018 Fabian Hofmann (FIAS), Tom Brown (KIT IAI), Fabian Neumann (KIT IAI)
+Copyright 2017-2019 Fabian Hofmann (FIAS), Tom Brown (KIT IAI), Fabian Neumann (KIT IAI)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

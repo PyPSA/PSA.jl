@@ -69,7 +69,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     N_ext_ST = sum(.!(.!stores[:e_nom_extendable]))
     N_ST = N_fix_ST + N_ext_ST
     
-    if N_ext_LN > 0
+    if N_fix_LN > 0
         error("Code currently only works if all lines are extendable lines!")
     end
     

@@ -4,10 +4,14 @@ using Test
 const testdir = dirname("test/")
 
 tests = [
-    "auxiliaries",
-    "lopf",
     "PSA",
-    "netcdf_io"
+    "utils",
+    "build_lopf",
+    "build_block_lopf",
+    "run_lopf",
+    "run_iterative_lopf",
+    "run_benders_lopf",
+    "run_lazybenders_lopf"
 ]
 
 @testset "PSA" begin

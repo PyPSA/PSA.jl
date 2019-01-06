@@ -25,6 +25,14 @@ function run_benders_lopf(network, solver;
     remove_inactive_threshold::Float64 = 1e2
     )
 
+    #################
+    # sanity checks #
+    #################
+
+    ###################
+    # precalculations #
+    ###################
+
     calculate_dependent_values!(network)
     T = nrow(network.snapshots)
     ext_gens_b = convert(BitArray, network.generators[:p_nom_extendable])
@@ -60,6 +68,10 @@ function run_benders_lopf(network, solver;
         push!(coupled_slave_constrs, :flows_upper)
         push!(coupled_slave_constrs, :flows_lower)
     end
+
+    ###################################
+    # build master and slave problems # 
+    ###################################
     
     # build master model
     model_master = build_lopf(network, solver,
@@ -94,7 +106,11 @@ function run_benders_lopf(network, solver;
     N_slaves = length(models_slave)
         
     uncoupled_slave_constrs = setdiff(getconstraints(first(models_slave)), coupled_slave_constrs)
-    
+
+    ############################
+    # initialise log variables # 
+    ############################
+
     iteration = 1
     inexact_iterations > 0 ? initial_mip_gap=inexact_mip_gap : initial_mip_gap = mip_gap
     inexact_iterations > 0 ? push!(solver.options, (:MIPGap, initial_mip_gap)) : nothing
@@ -104,6 +120,10 @@ function run_benders_lopf(network, solver;
     memory_master = Float64[] # MBytes
 
     println("\nITER\tGAP")
+
+    ####################################
+    # enter benders decomposition loop # 
+    ####################################
 
     while(iteration <= max_iterations)
 
@@ -146,13 +166,14 @@ function run_benders_lopf(network, solver;
         end
      
         # adapt RHS of slave model with solution from master problem
+     
         model_slave = models_slave[1]
+     
         for t=1:T
 
             split_subproblems ? model_slave = models_slave[t] : nothing
 
-
-            # generators
+            # RHS generators
 
             rf = rf_dict[:bounds_G]
 
@@ -170,7 +191,7 @@ function run_benders_lopf(network, solver;
 
             end
 
-            # lines
+            # RHS lines
 
             rf = rf_dict[:bounds_LN]
 
@@ -188,7 +209,7 @@ function run_benders_lopf(network, solver;
 
             end
 
-            # links
+            # RHS links
 
             rf = rf_dict[:bounds_LK]
 
@@ -206,7 +227,7 @@ function run_benders_lopf(network, solver;
 
             end
 
-            # flows
+            # RHS flows
                     
             rf = rf_dict[:flows]
 
@@ -242,12 +263,14 @@ function run_benders_lopf(network, solver;
             )
         end
 
+        # solve slave problems
         statuses_slave = Symbol[]
         for i=1:N_slaves
             push!(statuses_slave, solve(models_slave[i])) 
         end
         status_slave = minimum(statuses_slave)
 
+        # get results of slave problems
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)
         duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext)
         duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext)
@@ -263,11 +286,13 @@ function run_benders_lopf(network, solver;
 
         ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_cuts)
 
+        # relaxation handling
         if objective_slave_current - ALPHA_current <= relax_threshold && relax == true
             println("Drop relaxation!")
             relax = false
         end
 
+        # inexactness handling
         if inexact_iterations!=0 && (objective_slave_current - ALPHA_current <= inexact_threshold || inexact_iterations == iteration)
             println("Drop inexact solutions!")
             println(mip_gap)
@@ -289,41 +314,58 @@ function run_benders_lopf(network, solver;
         end
 
         if !individualcuts
-            Trange = [1:T] 
+            T_range = [1:T] 
         else 
-            Trange = 1:T
+            T_range = 1:T
         end
 
-        for Tr = Trange
+        for T_range_curr = T_range
 
-            N_slaves == 1 ? slave_id = 1 : slave_id = Tr
-            individualcuts ? cut_id = Tr : cut_id = 1
+            N_slaves == 1 ? slave_id = 1 : slave_id = T_range_curr
+            individualcuts ? cut_id = T_range_curr : cut_id = 1
 
             # calculate coupled cut components
 
-            cut_G = sum(  
+            cut_G_lower = sum(  
                     duals_lower_bounds_G_ext[t,gr] * rf_dict[:bounds_G] * p_min_pu(t,gr) * model_master[:G_p_nom][gr]
-                  + duals_upper_bounds_G_ext[t,gr] * rf_dict[:bounds_G] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
-                for t=Tr for gr=1:N_ext_G)
+                for t=T_range_curr for gr=1:N_ext_G)
+            
+            cut_G_upper = sum(  
+                    duals_upper_bounds_G_ext[t,gr] * rf_dict[:bounds_G] * p_max_pu(t,gr) * model_master[:G_p_nom][gr]
+                for t=T_range_curr for gr=1:N_ext_G)
 
-            cut_LN = sum(  
+            cut_LN_lower = sum(  
                     duals_lower_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                  + duals_upper_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
-                for t=Tr for l=1:N_ext_LN)
+                for t=T_range_curr for l=1:N_ext_LN)
+
+            cut_LN_upper = sum(  
+                    duals_upper_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                for t=T_range_curr for l=1:N_ext_LN)
 
             cut_LK = sum( 
                     duals_lower_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
-                  + duals_upper_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
-                for t=Tr for l=1:N_ext_LK)
+                for t=T_range_curr for l=1:N_ext_LK)
+
+            cut_LK = sum( 
+                    duals_upper_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                for t=T_range_curr for l=1:N_ext_LK)
 
             if investment_type=="integer_bigm"
 
-                cut_flows = sum(  
+                cut_flows_lower = sum(  
+                        duals_flows_lower[t,c+1,l] * rf_dict[:flows] * ( 1 - model_master[:LN_opt][l,c] ) * bigm_lower 
+                    for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
+
+                cut_flows_upper = sum(  
                         duals_flows_upper[t,c+1,l] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper 
-                      + duals_flows_lower[t,c+1,l] * rf_dict[:flows] * ( 1 - model_master[:LN_opt][l,c] ) * bigm_lower 
-                    for t=Tr for l=1:N_ext_LN for c in candidates[l])
+                    for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
             end
+
+            cut_G = cut_G_lower + cut_G_upper
+            cut_LN = cut_LN_lower + cut_LN_upper
+            cut_LK = cut_LK_lower + cut_LK_upper
+            cut_flows = cut_flows_lower + cut_flows_upper
 
             # calculate uncoupled cut components
             cut_const = get_benderscut_constant(models_slave[slave_id],uncoupled_slave_constrs)
@@ -374,7 +416,11 @@ function run_benders_lopf(network, solver;
 
         iteration += 1
 
-    end
+    end # benders decomposition loop
+
+    ##################
+    # output results #
+    ##################
 
     if iteration <= max_iterations
         write_optimalsolution(network, model_master; sm=models_slave, joint=false)

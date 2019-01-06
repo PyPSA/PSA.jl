@@ -912,7 +912,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                             ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                             ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
                             - LN[l,t]
-                        ) >= rf * ( LN_opt[l,c] - 1 ) * bigm_upper
+                        ) >= rf * ( LN_opt[l,c] - 1 ) * bigm_upper[l]
                     )
                     
                     @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_vars_curr],
@@ -920,7 +920,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                             ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                             ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
                             - LN[l,t]
-                        ) >= rf * ( 1 - LN_opt[l,c] ) * bigm_lower    
+                        ) >= rf * ( 1 - LN_opt[l,c] ) * bigm_lower[l]    
                     )
 
                     @constraint(m, flows_fix[l=1:(sum(fix_lines_b)), t=T_vars_curr],
@@ -955,7 +955,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                                 ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                                 ( THETA[busidx[lines[:bus0][l]], t_vars_curr] - THETA[busidx[lines[:bus1][l]], t_vars_curr] ) 
                                 - LN[l,t_vars_curr]
-                            ) >= rf * bigm_upper * (c == 0 ? 0 : -1)
+                            ) >= rf * bigm_upper[l] * (c == 0 ? 0 : -1)
                         )
         
                         @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_vars_curr],
@@ -963,7 +963,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                                 ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                                 ( THETA[busidx[lines[:bus0][l]], t_vars_curr] - THETA[busidx[lines[:bus1][l]], t_vars_curr] ) 
                                 - LN[l,t_vars_curr]
-                            ) <= rf * bigm_lower * (c == 0 ? 0 : 1)
+                            ) <= rf * bigm_lower[l] * (c == 0 ? 0 : 1)
                         )
 
                         @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=T_vars_curr],
@@ -994,7 +994,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                                 ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                                 ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
                                 - LN[l,t]
-                            ) >= rf * bigm_upper*(c == 0 ? 0 : -1)
+                            ) >= rf * bigm_upper[l] * (c == 0 ? 0 : -1)
                         )
         
                         @constraint(m, flows_lower[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_params_curr],
@@ -1002,7 +1002,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                                 ( 1 + c / lines[:num_parallel][l] ) *lines[:x_pu][l]^(-1) *
                                 ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
                                 - LN[l,t]
-                            ) <= rf * bigm_lower * (c == 0 ? 0 : 1)
+                            ) <= rf * bigm_lower[l] * (c == 0 ? 0 : 1)
                         )
 
                         @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=T_params_curr],

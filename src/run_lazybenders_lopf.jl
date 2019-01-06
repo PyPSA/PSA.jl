@@ -2,7 +2,6 @@ using JuMP
 using MathProgBase
 
 # TODO: neglects storage units, storages at the moment
-# TODO: refactor
 
 function run_lazybenders_lopf(network, solver; 
     formulation::String = "angles_linear",
@@ -235,12 +234,12 @@ function run_lazybenders_lopf(network, solver;
                         
                         JuMP.setRHS(
                             model_slave[:flows_upper][l,c,t],
-                            rf * ( LN_opt_current[l,c] - 1 ) * bigm_upper 
+                            rf * ( LN_opt_current[l,c] - 1 ) * bigm_upper[l] 
                         )
                         
                         JuMP.setRHS(
                             model_slave[:flows_lower][l,c,t],
-                            rf * ( 1 - LN_opt_current[l,c] ) * bigm_lower 
+                            rf * ( 1 - LN_opt_current[l,c] ) * bigm_lower[l] 
                         )
 
                     end
@@ -310,30 +309,31 @@ function run_lazybenders_lopf(network, solver;
                     duals_upper_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=T_range_curr for l=1:N_ext_LN)
 
-            cut_LK = sum( 
+            cut_LK_lower = sum( 
                     duals_lower_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
                 for t=T_range_curr for l=1:N_ext_LK)
 
-            cut_LK = sum( 
+            cut_LK_upper = sum( 
                     duals_upper_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
                 for t=T_range_curr for l=1:N_ext_LK)
+                    
+            cut_G = cut_G_lower + cut_G_upper
+            cut_LN = cut_LN_lower + cut_LN_upper
+            cut_LK = cut_LK_lower + cut_LK_upper
 
             if investment_type=="integer_bigm"
 
                 cut_flows_lower = sum(  
-                        duals_flows_lower[t,c+1,l] * rf_dict[:flows] * ( 1 - model_master[:LN_opt][l,c] ) * bigm_lower 
+                        duals_flows_lower[t,c+1,l] * rf_dict[:flows] * ( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows_upper = sum(  
-                        duals_flows_upper[t,c+1,l] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper 
+                        duals_flows_upper[t,c+1,l] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
-            end
+                cut_flows = cut_flows_lower + cut_flows_upper
 
-            cut_G = cut_G_lower + cut_G_upper
-            cut_LN = cut_LN_lower + cut_LN_upper
-            cut_LK = cut_LK_lower + cut_LK_upper
-            cut_flows = cut_flows_lower + cut_flows_upper
+            end
 
             # calculate uncoupled cut components
             cut_const = get_benderscut_constant(models_slave[slave_id],uncoupled_slave_constrs)

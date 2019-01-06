@@ -22,23 +22,16 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
         push!(capacities, network.lines[:s_nom_opt])
         push!(reactances, network.lines[:x])
 
-        # debug
-        println("s_nom_opt_$k = $(network.lines[:s_nom_opt])")
-        println("x_$k (before) = $(network.lines[:x])")
-
         for l=1:nrow(network.lines)
             if network.lines[:s_nom_extendable][l]
                 if network.lines[:s_nom_opt][l] == 0.0
-                    network.lines[:x][l] = 10e6 # reactance cannot take infinity values, instead choose prohibitively high value!
+                    network.lines[:x][l] = 10e7 # reactance cannot take infinity values, instead choose prohibitively high value!
                 else
                     network.lines[:x][l] = (x_0[l] * s_nom_0[l]) / network.lines[:s_nom_opt][l]
                 end
             end
         end
 
-        # debug
-        println("x_$k (after) = $(network.lines[:x])")
-            
     end
 
     # perform post discretization if selected
@@ -58,9 +51,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
 
             for threshold in discretization_thresholds
 
-                println("#######")
-                println("START EVALUATING THRESHOLD $threshold")
-                println("#######")
+                println("\nSTART EVALUATING THRESHOLD $threshold\n")
 
                 # round line extensions to integer
                 for l=1:nrow(network.lines)
@@ -89,9 +80,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
 
                 # compare to best solution in loop; better gets model
                 if (threshold == discretization_thresholds[1]) || (m_threshold.objVal < m_opt.objVal)
-                    println("#######")
-                    println("CURRENT THRESHOLD BETTER OR FIRST ITERATION -- UPDATING threshold_opt to $threshold")
-                    println("#######")
+                    println("\nCURRENT THRESHOLD BETTER OR FIRST ITERATION -- UPDATING threshold_opt to $threshold\n")
                     m_opt = m_threshold
                     threshold_opt = threshold
                 end
@@ -106,9 +95,7 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
         end
 
         # run with optimal threshold choice
-        println("#######")
-        println("RUNNING AGAIN WITH OPTIMAL THRESHOLD CHOICE $threshold_opt")
-        println("#######")
+        println("\nRUNNING AGAIN WITH OPTIMAL THRESHOLD CHOICE $threshold_opt\n")
 
         # round line extensions to integer
         for l=1:nrow(network.lines)

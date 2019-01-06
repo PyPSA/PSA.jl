@@ -60,9 +60,12 @@ function run_benders_lopf(network, solver;
         :upper_bounds_G_ext,
         :lower_bounds_L_ext,
         :upper_bounds_L_ext,
-        :lower_bounds_LK_ext,
-        :upper_bounds_LK_ext
         ]
+
+    if N_ext_LK > 0
+        push!(coupled_slave_constrs, :lower_bounds_LK_ext)
+        push!(coupled_slave_constrs, :upper_bounds_LK_ext)
+    end
 
     if investment_type=="integer_bigm"
         push!(coupled_slave_constrs, :flows_upper)
@@ -142,7 +145,7 @@ function run_benders_lopf(network, solver;
             objective_master_current = -bigM
             G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
             LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
-            LK_p_nom_current = network.links[ext_links_b,:][:p_nom]
+            N_ext_LK>0 ? LK_p_nom_current = network.links[ext_links_b,:][:p_nom] : nothing
             
             investment_type=="integer_bigm" ? LN_opt_current = nothing : LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:]))
             setvalue(model_master[:ALPHA], -bigM)
@@ -152,7 +155,7 @@ function run_benders_lopf(network, solver;
             objective_master_current = getobjectivevalue(model_master)
             G_p_nom_current = getvalue(model_master[:G_p_nom])
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
-            LK_p_nom_current = getvalue(model_master[:LK_p_nom])
+            N_ext_LK>0 ? LK_p_nom_current = network.links[ext_links_b,:][:p_nom] : nothing
             investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
 
         else
@@ -211,19 +214,23 @@ function run_benders_lopf(network, solver;
 
             # RHS links
 
-            rf = rf_dict[:bounds_LK]
+            if N_ext_LK > 0
 
-            for l=1:N_ext_LK
-
-                JuMP.setRHS(
-                    model_slave[:lower_bounds_LK_ext][t,l],
-                    rf * LK_p_nom_current[l] * network.links[ext_links_b, :p_min_pu][l]
-                )
-                
-                JuMP.setRHS(
-                    model_slave[:upper_bounds_LK_ext][t,l],
-                    rf * LK_p_nom_current[l] * network.links[ext_links_b, :p_max_pu][l]
-                )
+                rf = rf_dict[:bounds_LK]
+    
+                for l=1:N_ext_LK
+    
+                    JuMP.setRHS(
+                        model_slave[:lower_bounds_LK_ext][t,l],
+                        rf * LK_p_nom_current[l] * network.links[ext_links_b, :p_min_pu][l]
+                    )
+                    
+                    JuMP.setRHS(
+                        model_slave[:upper_bounds_LK_ext][t,l],
+                        rf * LK_p_nom_current[l] * network.links[ext_links_b, :p_max_pu][l]
+                    )
+    
+                end
 
             end
 
@@ -276,8 +283,11 @@ function run_benders_lopf(network, solver;
         duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext)
         duals_lower_bounds_L_ext = getduals(models_slave, :lower_bounds_L_ext)
         duals_upper_bounds_L_ext = getduals(models_slave, :upper_bounds_L_ext)
-        duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext)
-        duals_upper_bounds_LK_ext = getduals(models_slave, :upper_bounds_LK_ext)
+
+        if N_ext_LK > 0
+            duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext)
+            duals_upper_bounds_LK_ext = getduals(models_slave, :upper_bounds_LK_ext)
+        end
         
         if investment_type=="integer_bigm"
             duals_flows_upper = getduals_flows(models_slave, :flows_upper)
@@ -342,13 +352,18 @@ function run_benders_lopf(network, solver;
                     duals_upper_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=T_range_curr for l=1:N_ext_LN)
 
-            cut_LK_lower = sum( 
-                    duals_lower_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
-                for t=T_range_curr for l=1:N_ext_LK)
+            cut_LK_lower = 0
+            cut_LK_upper = 0
 
-            cut_LK_upper = sum( 
-                    duals_upper_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
-                for t=T_range_curr for l=1:N_ext_LK)
+            if N_ext_LK > 0
+                cut_LK_lower = sum( 
+                        duals_lower_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_min_pu][l] * model_master[:LK_p_nom][l]
+                    for t=T_range_curr for l=1:N_ext_LK)
+    
+                cut_LK_upper = sum( 
+                        duals_upper_bounds_LK_ext[t,l] * rf_dict[:bounds_LK] * network.links[ext_links_b,:p_max_pu][l] * model_master[:LK_p_nom][l]
+                    for t=T_range_curr for l=1:N_ext_LK)
+            end
 
             cut_G = cut_G_lower + cut_G_upper
             cut_LN = cut_LN_lower + cut_LN_upper

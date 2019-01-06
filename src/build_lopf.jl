@@ -78,7 +78,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     end
 
     sn = snapshot_number
-    sn>0 ? T_params = sn:sn : T_params = 1:T
+    if sn>0
+        T_params = sn:sn
+    else
+        T_params = 1:T
+    end
     T_params_length = length(T_params)
     
     if blockmodel

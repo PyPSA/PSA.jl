@@ -5,7 +5,7 @@ include("utils.jl")
 
 function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles_linear",
                     investment_type::String="continuous",
-                    blockmodel::Bool=false, benders::String="", snapshot_number=0, N_groups=1, blockstructure::Bool=false)
+                    blockmodel::Bool=false, benders::String="", snapshot_number=0, N_cuts=1, blockstructure::Bool=false)
 
     # This function is organized as the following:
     #
@@ -31,12 +31,12 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     blockmodel && benders!="" ? error("Can either do manual benders decomposition or use BlockDecomposition.jl!") : nothing
     
     rf = 1
-    rescaling_dict = rescaling_factors(rescaling)
+    rf_dict = rescaling_factors(rescaling)
 
+    calculate_dependent_values!(network)
     N = nrow(network.buses)
     L = nrow(network.lines)
     T = nrow(network.snapshots) #normally snapshots
-    calculate_dependent_values!(network)
     nrow(network.loads_t["p"])!=T ? network.loads_t["p"]=network.loads_t["p_set"] : nothing
     candidates = line_extensions_candidates(network)
 
@@ -154,7 +154,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     end
 
     if benders == "master"
-        @variable(m, ALPHA[g=1:N_groups]>=0)
+        @variable(m, ALPHA[g=1:N_cuts]>=0)
     end
 
     count = 1
@@ -194,7 +194,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         p_max_pu = select_time_dep(network, "generators", "p_max_pu",components=fix_gens_b)
         p_nom = network.generators[fix_gens_b,:p_nom]
 
-        rf = rescaling_dict[:bounds_G]
+        rf = rf_dict[:bounds_G]
         
         if benders != "master"
             if blockstructure || sn>0
@@ -290,7 +290,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         fix_lines_b = (.!lines[:s_nom_extendable])
         ext_lines_b = .!fix_lines_b
 
-        rf = rescaling_dict[:bounds_LN]
+        rf = rf_dict[:bounds_LN]
 
         # 2.3 add variables
         if benders != "master"
@@ -427,7 +427,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     # 3. add all links to the model
         #println("Adding links to the model.")
 
-        rf = rescaling_dict[:bounds_LK]
+        rf = rf_dict[:bounds_LK]
 
         # 3.1 set different link types
         links = network.links
@@ -812,7 +812,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
         #println("Adding power flow formulation $formulation to the model.")
 
-        rf = rescaling_dict[:flows]
+        rf = rf_dict[:flows]
 
         if benders != "master"
 
@@ -1317,7 +1317,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     exist_fix_ren_gens ? def_p_max_pu_fix[loc_fix_b] .= sum_of_p_max_pu_fix : nothing
                     def_p_max_pu_ext[loc_ext_b] .= sum_of_p_max_pu_ext
 
-                    rf = rescaling_dict[:approx_restarget]
+                    rf = rf_dict[:approx_restarget]
 
                     if exist_fix_ren_gens
 
@@ -1384,7 +1384,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                     + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                     + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
             
-                    + sum( ALPHA[g] for g=1:N_groups )
+                    + sum( ALPHA[g] for g=1:N_cuts )
                 )
 
             elseif benders == "slave"

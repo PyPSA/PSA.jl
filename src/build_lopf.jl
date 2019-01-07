@@ -341,10 +341,10 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
             @constraints(m, begin
 
-                upper_bounds_L_ext[t=T_params_curr,l=1:N_ext_LN], 
+                upper_bounds_LN_ext[t=T_params_curr,l=1:N_ext_LN], 
                     rf * LN_ext[l,t] <=  rf * lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l]
 
-                lower_bounds_L_ext[t=T_params_curr,l=1:N_ext_LN], 
+                lower_bounds_LN_ext[t=T_params_curr,l=1:N_ext_LN], 
                     rf * LN_ext[l,t] >= rf * (-1) * lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l]
 
             end)
@@ -354,11 +354,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             if blockstructure || sn>0
                 @constraints(m, begin
     
-                    upper_bounds_L_ext[t=T_params_curr,l=1:N_ext_LN], 
+                    upper_bounds_LN_ext[t=T_params_curr,l=1:N_ext_LN], 
                         rf * LN_ext[l,t_vars_curr] <=  
                         rf * lines[:s_max_pu][l] * lines[ext_lines_b,:s_nom][l]
     
-                    lower_bounds_L_ext[t=T_params_curr,l=1:N_ext_LN],
+                    lower_bounds_LN_ext[t=T_params_curr,l=1:N_ext_LN],
                         rf * LN_ext[l,t_vars_curr] >=
                         rf * (-1) * lines[:s_max_pu][l] * lines[ext_lines_b,:s_nom][l]
     
@@ -366,11 +366,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             else
                 @constraints(m, begin
     
-                    upper_bounds_L_ext[t=T_params_curr,l=1:N_ext_LN], 
+                    upper_bounds_LN_ext[t=T_params_curr,l=1:N_ext_LN], 
                         rf * LN_ext[l,t] <=  
                         rf * lines[:s_max_pu][l] * lines[ext_lines_b,:s_nom][l]
     
-                    lower_bounds_L_ext[t=T_params_curr,l=1:N_ext_LN],
+                    lower_bounds_LN_ext[t=T_params_curr,l=1:N_ext_LN],
                         rf * LN_ext[l,t] >=
                         rf * (-1) * lines[:s_max_pu][l] * lines[ext_lines_b,:s_nom][l]
     

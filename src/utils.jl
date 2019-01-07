@@ -388,7 +388,7 @@ end
 # TODO: just for one line type at the moment and same for all lines
 function set_maximum_extendable_circuits!(network; additional_num_parallel=0, extension_factor=1)
     for i=1:nrow(network.lines)
-        network.lines[:s_nom_max][i] =  extension_factor*network.lines[:s_nom][i] + additional_num_parallel*1698.10261174053
+        network.lines[:s_nom_max][i] =  extension_factor*network.lines[:s_nom][i] + additional_num_parallel*1698.11
     end
 end
 
@@ -461,7 +461,6 @@ function line_extensions_candidates(network)
     return candidates
 end
 
-# TODO: test functionality
 function bigm(cnstr::Symbol, network; max_angle_diff::Float64=pi/6)
                 
     lines = network.lines
@@ -566,7 +565,8 @@ function rescaling_factors(rescaling::Bool)
         :bounds_G => 1e4,
         :bounds_LN => 1e3,
         :bounds_LK => 1e2,
-        :flows => 1
+        :flows => 1,
+        :benderscut => 1e-3
     )
     !rescaling ? for k in keys(dict) dict[k] = 1 end : nothing
     return dict

@@ -53,8 +53,8 @@ function run_lazybenders_lopf(network, solver;
     coupled_slave_constrs = [
         :lower_bounds_G_ext,
         :upper_bounds_G_ext,
-        :lower_bounds_L_ext,
-        :upper_bounds_L_ext,
+        :lower_bounds_LN_ext,
+        :upper_bounds_LN_ext,
         ]
 
     if N_ext_LK > 0
@@ -196,12 +196,12 @@ function run_lazybenders_lopf(network, solver;
             for l=1:N_ext_LN
 
                 JuMP.setRHS(
-                    model_slave[:lower_bounds_L_ext][t,l],
+                    model_slave[:lower_bounds_LN_ext][t,l],
                     rf * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * LN_s_nom_current[l]
                 )
                 
                 JuMP.setRHS(
-                    model_slave[:upper_bounds_L_ext][t,l],
+                    model_slave[:upper_bounds_LN_ext][t,l],
                     rf * network.lines[ext_lines_b,:s_max_pu][l] * LN_s_nom_current[l]
                 )
 
@@ -268,8 +268,8 @@ function run_lazybenders_lopf(network, solver;
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)
         duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext)
         duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext)
-        duals_lower_bounds_L_ext = getduals(models_slave, :lower_bounds_L_ext)
-        duals_upper_bounds_L_ext = getduals(models_slave, :upper_bounds_L_ext)
+        duals_lower_bounds_LN_ext = getduals(models_slave, :lower_bounds_LN_ext)
+        duals_upper_bounds_LN_ext = getduals(models_slave, :upper_bounds_LN_ext)
 
         if N_ext_LK > 0 
             duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext)
@@ -312,11 +312,11 @@ function run_lazybenders_lopf(network, solver;
                 for t=T_range_curr for gr=1:N_ext_G)
 
             cut_LN_lower = sum(  
-                    duals_lower_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    duals_lower_bounds_LN_ext[t,l] * rf_dict[:bounds_LN] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=T_range_curr for l=1:N_ext_LN)
 
             cut_LN_upper = sum(  
-                    duals_upper_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    duals_upper_bounds_LN_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=T_range_curr for l=1:N_ext_LN)
 
             cut_LK_lower = 0
@@ -339,11 +339,11 @@ function run_lazybenders_lopf(network, solver;
             if investment_type=="integer_bigm"
 
                 cut_flows_lower = sum(  
-                        duals_flows_lower[t,c+1,l] * rf_dict[:flows] * ( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
+                        duals_flows_lower[slave_id][l,c,t] * rf_dict[:flows] * ( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows_upper = sum(  
-                        duals_flows_upper[t,c+1,l] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
+                        duals_flows_upper[slave_id][l,c,t] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows = cut_flows_lower + cut_flows_upper
@@ -366,7 +366,7 @@ function run_lazybenders_lopf(network, solver;
 
                 else
 
-                    @constraint(model_master, rf*model_master[:ALPHA][cut_id] >= 
+                    @constraint(model_master, rf * model_master[:ALPHA][cut_id] >= 
                         rf * ( cut_G + cut_LN + cut_LK + cut_flows + cut_const ) 
                     )
 

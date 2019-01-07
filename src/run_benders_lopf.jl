@@ -58,8 +58,8 @@ function run_benders_lopf(network, solver;
     coupled_slave_constrs = [
         :lower_bounds_G_ext,
         :upper_bounds_G_ext,
-        :lower_bounds_L_ext,
-        :upper_bounds_L_ext,
+        :lower_bounds_LN_ext,
+        :upper_bounds_LN_ext,
         ]
 
     if N_ext_LK > 0
@@ -122,7 +122,7 @@ function run_benders_lopf(network, solver;
     lbs = Float64[]
     memory_master = Float64[] # MBytes
 
-    println("\nITER\tGAP")
+    println("\nITER\tSLAVE_OBJ_CURR\tALPHA_CURR\tGAP")
 
     ####################################
     # enter benders decomposition loop # 
@@ -146,7 +146,6 @@ function run_benders_lopf(network, solver;
             G_p_nom_current = network.generators[ext_gens_b,:][:p_nom]
             LN_s_nom_current = network.lines[ext_lines_b,:][:s_nom]
             N_ext_LK>0 ? LK_p_nom_current = network.links[ext_links_b,:][:p_nom] : nothing
-            
             investment_type=="integer_bigm" ? LN_opt_current = nothing : LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:]))
             setvalue(model_master[:ALPHA], -bigM)
 
@@ -201,12 +200,12 @@ function run_benders_lopf(network, solver;
             for l=1:N_ext_LN
 
                 JuMP.setRHS(
-                    model_slave[:lower_bounds_L_ext][t,l],
+                    model_slave[:lower_bounds_LN_ext][t,l],
                     rf * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * LN_s_nom_current[l]
                 )
                 
                 JuMP.setRHS(
-                    model_slave[:upper_bounds_L_ext][t,l],
+                    model_slave[:upper_bounds_LN_ext][t,l],
                     rf * network.lines[ext_lines_b,:s_max_pu][l] * LN_s_nom_current[l]
                 )
 
@@ -281,8 +280,8 @@ function run_benders_lopf(network, solver;
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)
         duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext)
         duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext)
-        duals_lower_bounds_L_ext = getduals(models_slave, :lower_bounds_L_ext)
-        duals_upper_bounds_L_ext = getduals(models_slave, :upper_bounds_L_ext)
+        duals_lower_bounds_LN_ext = getduals(models_slave, :lower_bounds_LN_ext)
+        duals_upper_bounds_LN_ext = getduals(models_slave, :upper_bounds_LN_ext)
 
         if N_ext_LK > 0
             duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext)
@@ -315,7 +314,7 @@ function run_benders_lopf(network, solver;
 
             push!(lbs, ALPHA_current)
             push!(ubs, objective_slave_current)
-            println("$iteration\t$(objective_slave_current - ALPHA_current)")
+            println("$iteration\t$objective_slave_current\t$ALPHA_current\t$(objective_slave_current - ALPHA_current)")
 
             println("Optimal solution of the original problem found")
             println("The optimal objective value is ", objective_master_current)
@@ -345,11 +344,11 @@ function run_benders_lopf(network, solver;
                 for t=T_range_curr for gr=1:N_ext_G)
 
             cut_LN_lower = sum(  
-                    duals_lower_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    duals_lower_bounds_LN_ext[t,l] * rf_dict[:bounds_LN] * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=T_range_curr for l=1:N_ext_LN)
 
             cut_LN_upper = sum(  
-                    duals_upper_bounds_L_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
+                    duals_upper_bounds_LN_ext[t,l] * rf_dict[:bounds_LN] * network.lines[ext_lines_b,:s_max_pu][l] * model_master[:LN_s_nom][l]
                 for t=T_range_curr for l=1:N_ext_LN)
 
             cut_LK_lower = 0
@@ -399,7 +398,7 @@ function run_benders_lopf(network, solver;
 
                 else
 
-                    @constraint(model_master, rf*model_master[:ALPHA][cut_id] >= 
+                    @constraint(model_master, rf * model_master[:ALPHA][cut_id] >= 
                         rf * ( cut_G + cut_LN + cut_LK + cut_flows + cut_const ) 
                     )
 
@@ -428,7 +427,7 @@ function run_benders_lopf(network, solver;
 
         push!(lbs, ALPHA_current)
         push!(ubs, objective_slave_current)
-        println("$iteration\t$(objective_slave_current - ALPHA_current)")
+        println("$iteration\t$objective_slave_current\t$ALPHA_current\t$(objective_slave_current - ALPHA_current)")
 
         iteration += 1
 

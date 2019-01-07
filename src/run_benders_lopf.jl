@@ -155,7 +155,7 @@ function run_benders_lopf(network, solver;
             objective_master_current = getobjectivevalue(model_master)
             G_p_nom_current = getvalue(model_master[:G_p_nom])
             LN_s_nom_current = getvalue(model_master[:LN_s_nom])
-            N_ext_LK>0 ? LK_p_nom_current = network.links[ext_links_b,:][:p_nom] : nothing
+            N_ext_LK>0 ? LK_p_nom_current = getvalue(model_master[:LK_p_nom]) : nothing
             investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
 
         else

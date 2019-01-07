@@ -541,22 +541,22 @@ end
 
 getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
 
-# TODO: verify
-function getduals_bigm(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
+function getduals_flows(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
     x=getdual(getindex.(m, cnstr))
-    z = []
-    for t=1:length(x)
-        size = maximum(keys(x[t]))
-        y = zeros(size[3], size[2]+1, size[1])
-        for (l,c,ts) in keys(x[t])
-            y[ts,c+1,l] =  x[t][l,c,ts]
-        end
-        push!(z, y)
-    end
-    z = vcat(z...)
-    # filter small values
-    filter_b ? z[(z.<1e-3).&(z.>-1e-3)] = 0.0 : nothing
-    return z
+    # z = []
+    # for t=1:length(x)
+    #     size = maximum(keys(x[t]))
+    #     y = zeros(size[1], size[2]+1, 1)
+    #     @show(y)
+    #     for (l,c,ts) in keys(x[t])
+    #         y[l,c+1,1] =  x[t][l,c,t]
+    #     end
+    #     push!(z, y)
+    # end
+    # z = vcat(z...)
+    # # filter small values
+    # filter_b ? z[(z.<1e-3).&(z.>-1e-3)] = 0.0 : nothing
+    return x
 end
 
 function rescaling_factors(rescaling::Bool)

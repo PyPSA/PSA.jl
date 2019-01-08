@@ -920,7 +920,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                             ( 1 + c / lines[:num_parallel][l] ) * lines[:x_pu][l]^(-1) * 
                             ( THETA[busidx[lines[:bus0][l]], t] - THETA[busidx[lines[:bus1][l]], t] )
                             - LN[l,t]
-                        ) >= rf * ( 1 - LN_opt[l,c] ) * bigm_lower[l]    
+                        ) <= rf * ( 1 - LN_opt[l,c] ) * bigm_lower[l]    
                     )
 
                     @constraint(m, flows_fix[l=1:(sum(fix_lines_b)), t=T_vars_curr],

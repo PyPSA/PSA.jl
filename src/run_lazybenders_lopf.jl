@@ -360,13 +360,13 @@ function run_lazybenders_lopf(network, solver;
 
                 if investment_type!="integer_bigm"
 
-                    @constraint(model_master, rf * model_master[:ALPHA][cut_id] >= 
+                    @lazyconstraint(cb, rf * model_master[:ALPHA][cut_id] >= 
                         rf * ( cut_G + cut_LN + cut_LK + cut_const ) 
                     )
 
                 else
 
-                    @constraint(model_master, rf * model_master[:ALPHA][cut_id] >= 
+                    @lazyconstraint(cb, rf * model_master[:ALPHA][cut_id] >= 
                         rf * ( cut_G + cut_LN + cut_LK + cut_flows + cut_const ) 
                     )
 
@@ -377,13 +377,13 @@ function run_lazybenders_lopf(network, solver;
 
                 if investment_type!="integer_bigm"
 
-                    @constraint(model_master, 0 >= 
+                    @lazyconstraint(cb, 0 >= 
                         rf * ( cut_G + cut_LN + cut_LK + cut_const ) 
                     )
                 
                 else
                     
-                    @constraint(model_master, 0 >=
+                    @lazyconstraint(cb, 0 >=
                         rf * ( cut_G + cut_LN + cut_LK + cut_flows + cut_const ) 
                     )
 

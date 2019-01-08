@@ -1,12 +1,6 @@
 using BlockDecomposition
 
-# TODO:
-# 1. add decision variable for reactance in master problem (requires exisitng line)
-# --- LN_x_pu[l] = ( network.lines[:s_nom][l]  * network.lines[:x_pu][l] ) / LN_s_nom[l]
-# --- added to the master problem this is non-linear! - But linear with susceptance!
-# --- what would happen if x was updated everytime a master solution is handed to the master problem?
-# --- CPLEX cannot handle this, maybe need manual benders decomposition scheme.
-
+"""Builds a linear optimal power flow model to use with BlockDecomposition.jl"""
 function build_block_lopf(network, solver; formulation::String="angles_linear",
                          investment_type::String="integer", decomposition::String="benders", n_sub::Int64=1)
 
@@ -34,7 +28,7 @@ function build_block_lopf(network, solver; formulation::String="angles_linear",
 
     elseif decomposition == "dantzig-wolfe"
 
-        # TODO: not implemented yet: evaluate suitability + assign constraints to subproblems
+        # TODO: implement
 
         println("Apply Dantzig Wolfe Decomposition")
 
@@ -50,7 +44,7 @@ function build_block_lopf(network, solver; formulation::String="angles_linear",
 
     else
 
-        error("not implemented")
+        error("$decomposition is not implemented!")
     
     end    
 

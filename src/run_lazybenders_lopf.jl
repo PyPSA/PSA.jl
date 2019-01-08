@@ -1,8 +1,9 @@
 using JuMP
 using MathProgBase
 
-# TODO: neglects storage units, storages at the moment
+# TODO: neglects storage units and storages at the moment
 
+"""Solves a linear optimal power flow with Benders Decomposition using lazy constraints."""
 function run_lazybenders_lopf(network, solver; 
     formulation::String = "angles_linear",
     investment_type::String = "continuous",

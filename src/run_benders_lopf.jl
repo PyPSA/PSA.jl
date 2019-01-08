@@ -1,8 +1,9 @@
 using JuMP
 using MathProgBase
 
-# TODO: neglects storage units, storages at the moment!
+# TODO: neglects storage units and  storages at the moment!
 
+"""Solves a linear optimal power flow with Benders Decomposition."""
 function run_benders_lopf(network, solver; 
     formulation::String = "angles_linear",
     investment_type::String = "continuous",
@@ -28,6 +29,8 @@ function run_benders_lopf(network, solver;
     #################
     # sanity checks #
     #################
+
+    # TODO: make a few checks on parameter selection!
 
     ###################
     # precalculations #
@@ -441,7 +444,7 @@ function run_benders_lopf(network, solver;
         write_optimalsolution(network, model_master; sm=models_slave, joint=false)
     else
         println("WARNING: Hit the maximum number of iterations. No solution provided.\n
-        Try choosing max_iterations>>$(max_iterations)!")
+        Try setting max_iterations > $(max_iterations)!")
     end
 
     return (model_master, models_slave, lbs, ubs, memory_master);

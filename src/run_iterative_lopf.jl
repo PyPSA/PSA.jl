@@ -1,22 +1,58 @@
-function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,formulation::String="angles_linear", investment_type::String="continuous", post_discretization::Bool=false, discretization_thresholds::Array{Float64,1}=[0.2,0.3], blockmodel=false, decomposition="benders")
+"""Solves an iterative linear optimal power flow"""
+function run_iterative_lopf(network, solver, iterations; 
+    rescaling::Bool=false,
+    formulation::String="angles_linear",
+    investment_type::String="continuous",
+    post_discretization::Bool=false,
+    discretization_thresholds::Array{Float64,1}=[0.2,0.3],
+    blockmodel=false,
+    decomposition="benders"
+    )
 
+    # precalculations and initialisation
     x_0 = deepcopy(network.lines[:x])
     s_nom_0 = deepcopy(network.lines[:s_nom])
-
-    # debug
-    println("x_0 = $x_0")
-    println("s_nom_0 = $s_nom_0")
-
     objectives = Float64[]
     capacities = Array{Float64,1}[]
     reactances = Array{Float64,1}[]
     m = nothing
 
+    # rounding function
+    function round_line_extension!()
+        for l=1:nrow(network.lines)
+
+            if network.lines[:s_nom_extendable][l]
+
+                num_parallel_extension = (s_nom_opt_continuous[l] / s_nom_0[l] - 1) * num_parallel_0[l]
+                if mod(num_parallel_extension,1) >= threshold 
+                    num_parallel_extension = ceil(num_parallel_extension)
+                else 
+                    num_parallel_extension = floor(num_parallel_extension)
+                end
+
+                extension_factor = (num_parallel_extension / num_parallel_0[l]+1)
+                network.lines[:x][l] = x_0[l] / extension_factor
+                network.lines[:s_nom_opt][l] = s_nom_0[l] * extension_factor
+                network.lines[:s_nom][l] = network.lines[:s_nom_opt][l]
+                network.lines[:s_nom_extendable][l] = false   
+            
+            end
+        end
+    end
+
+
+    # solve
     for k=1:iterations
 
         println("Run iteration $k")
 
-        m = run_lopf(network, solver; rescaling=rescaling,formulation=formulation, investment_type=investment_type, blockmodel=blockmodel, decomposition=decomposition)
+        m = run_lopf(network, solver; 
+            rescaling=rescaling,
+            formulation=formulation,
+            investment_type=investment_type,
+            blockmodel=blockmodel,
+            decomposition=decomposition
+            )
 
         push!(objectives, m.objVal)
         push!(capacities, network.lines[:s_nom_opt])
@@ -25,7 +61,8 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
         for l=1:nrow(network.lines)
             if network.lines[:s_nom_extendable][l]
                 if network.lines[:s_nom_opt][l] == 0.0
-                    network.lines[:x][l] = 10e7 # reactance cannot take infinity values, instead choose prohibitively high value!
+                    # reactance cannot take infinity values, instead choose prohibitively high value!
+                    network.lines[:x][l] = 10e7 
                 else
                     network.lines[:x][l] = (x_0[l] * s_nom_0[l]) / network.lines[:s_nom_opt][l]
                 end
@@ -53,30 +90,9 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
 
                 println("\nSTART EVALUATING THRESHOLD $threshold\n")
 
-                # round line extensions to integer
-                for l=1:nrow(network.lines)
-
-                    if network.lines[:s_nom_extendable][l]
-        
-                        num_parallel_extension = (s_nom_opt_continuous[l] / s_nom_0[l] - 1) * num_parallel_0[l]
-                        if mod(num_parallel_extension,1) >= threshold 
-                            num_parallel_extension = ceil(num_parallel_extension)
-                        else 
-                            num_parallel_extension = floor(num_parallel_extension)
-                        end
-        
-                        extension_factor = (num_parallel_extension / num_parallel_0[l]+1)
-                        network.lines[:x][l] = x_0[l] / extension_factor
-                        network.lines[:s_nom_opt][l] = s_nom_0[l] * extension_factor
-                        network.lines[:s_nom][l] = network.lines[:s_nom_opt][l]
-                        network.lines[:s_nom_extendable][l] = false   
-                    
-                    end
-                    
-                end
-
-                # run lopf
-                m_threshold = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", investment_type="continuous")
+                # run lopf with rounded line capacities 
+                round_line_extension!()
+                m_threshold = run_lopf(network, solver; rescaling=rescaling)
 
                 # compare to best solution in loop; better gets model
                 if (threshold == discretization_thresholds[1]) || (m_threshold.objVal < m_opt.objVal)
@@ -88,37 +104,13 @@ function run_iterative_lopf(network, solver, iterations; rescaling::Bool=false,f
                 # reset network extendable circuits
                 network.lines[:s_nom_extendable] = deepcopy(s_nom_extendable_0)
 
-                println(network.lines[:s_nom_extendable])
-
             end
-            
         end
 
         # run with optimal threshold choice
         println("\nRUNNING AGAIN WITH OPTIMAL THRESHOLD CHOICE $threshold_opt\n")
 
-        # round line extensions to integer
-        for l=1:nrow(network.lines)
-
-            if network.lines[:s_nom_extendable][l]
-
-                num_parallel_extension = (s_nom_opt_continuous[l] / s_nom_0[l] - 1) * num_parallel_0[l]
-                if mod(num_parallel_extension,1) >= threshold_opt
-                    num_parallel_extension = ceil(num_parallel_extension)
-                else 
-                    num_parallel_extension = floor(num_parallel_extension)
-                end
-
-                extension_factor = (num_parallel_extension / num_parallel_0[l]+1)
-                network.lines[:x][l] = x_0[l] / extension_factor
-                network.lines[:s_nom_opt][l] = s_nom_0[l] * extension_factor
-                network.lines[:s_nom][l] = network.lines[:s_nom_opt][l]
-                network.lines[:s_nom_extendable][l] = false   
-            
-            end
-            
-        end
-
+        round_line_extension!()
         s_nom_opt_T = deepcopy(network.lines[:s_nom_opt])
         m = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", investment_type="continuous")
 

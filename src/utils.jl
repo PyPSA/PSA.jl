@@ -27,6 +27,7 @@ function static_components(network)
     Symbol.(components)
 end
 
+
 function set_snapshots!(network, snapshots)
     for field=time_dependent_components(network)
         for df_name=keys(getfield(network,field))
@@ -52,8 +53,13 @@ function align_component_order!(network)
 end
 
 idx(dataframe) = Dict(zip(dataframe[:name], Iterators.countfrom(1)))
+
+
 rev_idx(dataframe) = Dict(zip(Iterators.countfrom(1), dataframe[:name]))
+
+
 idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
+
 
 function select_by(dataframe, col, selector)
     if length(findin(dataframe[col], selector))==0
@@ -67,6 +73,8 @@ function select_by(dataframe, col, selector)
         dataframe[ids,:]
     end
 end
+
+
 select_names(a, b) = select_by(a, :name, b)
 
 
@@ -79,6 +87,7 @@ function append_idx_col!(dataframe)
         dataframe[:idx] = collect(1:nrow(dataframe))
     end
 end
+
 
 function get_switchable_as_dense(network, component, attribute, snapshots=0)
     snapshots==0 ? snapshots = network.snapshots : nothing
@@ -196,6 +205,7 @@ function calculate_dependent_values!(network)
 
 end
 
+"""Converts the power system network into a Graph of LightGraphs.jl"""
 function to_graph(network)
     busidx = idx(network.buses)
     g = DiGraph(length(busidx))
@@ -208,6 +218,7 @@ function to_graph(network)
     return g
 end
 
+"""Calculates the incidence matrix of a network"""
 function incidence_matrix(network)
     busidx = idx(network.buses)
     lines = network.lines
@@ -219,21 +230,29 @@ function incidence_matrix(network)
     return K
 end
 
+
+"""Calculates the laplace matrix of a network"""
 function laplace_matrix(network)
     K = incidence_matrix(network)
     return K*K'
 end
 
+
+"""Calculates the susceptance-weighted laplace matrix of a network"""
 function weighted_laplace_matrix(network)
     K = incidence_matrix(network)
     B = susceptance_matrix(network)
     return K*B*K'
 end
 
+
+"""Returns the susceptance matrix of a network"""
 function susceptance_matrix(network)
     return diagm(network.lines[:x].^(-1))
 end
 
+
+"""Calculates the ptdf matrix of a network"""
 function ptdf_matrix(network)
     K = incidence_matrix(network)
     B = susceptance_matrix(network)
@@ -242,6 +261,8 @@ function ptdf_matrix(network)
     return H .- H[:,1]
 end
 
+
+"""Calculates the cycle basis of a network"""
 function get_cycles(network)
     busidx = idx(network.buses)
     elist = [(busidx[l[:bus0]], busidx[l[:bus1]]) for l in eachrow(network.lines)]
@@ -250,6 +271,8 @@ function get_cycles(network)
     cycle_basis(g)
 end
 
+
+# TODO: not used
 # following lift-and-project relaxation of Taylor2015a
 function get_shortest_line_paths(network)
     busidx = idx(network.buses)
@@ -294,6 +317,7 @@ function get_shortest_line_paths(network)
     return line_paths
 end
 
+
 function row_sum(df, row_id)
     if length(df[row_id,:]) == 0
         return 0.
@@ -302,6 +326,9 @@ function row_sum(df, row_id)
     end
 end
 
+
+# TODO: generalise for multiple solvers; currently only works for Gurobi
+"""Returns the irreducible infeasible set of constraints of an infeasible model"""
 function get_iis(m::JuMP.Model)
     grb_model = MathProgBase.getrawsolver(internalmodel(m))
     num_constrs = Gurobi.num_constrs(grb_model)
@@ -310,15 +337,17 @@ function get_iis(m::JuMP.Model)
     m.linconstr[find(iis_constrs)]
 end
 
-# TODO: get slack for different solvers (only works for Gurobi)!
-# if slack is zero, relaxation would improve results
+
+# TODO: generalise for multiple solvers; currently only works for Gurobi
+"""Returns the slack of each constraint of an optimised model"""
 function get_slack(m::JuMP.Model)
     Gurobi.get_dblattrarray( m.internalModel.inner, "Slack", 1, Gurobi.num_constrs(m.internalModel.inner))
 end
 
-# active constraints are constraints with no slack
-function get_active_constraints(m::JuMP.Model)
 
+""""Returns the set of active constraints (zero slack) of an optimised model"""
+function get_active_constraints(m::JuMP.Model)
+    
     slack = get_slack(m)
     
     function within_tolerance(x)
@@ -328,6 +357,8 @@ function get_active_constraints(m::JuMP.Model)
     sort(collect(Set(find(within_tolerance,slack))))
 end
 
+
+"""Prints the set of active constraints with slack (should be zero) to the console"""
 function print_active_constraints!(m::JuMP.Model)
 
     slack = get_slack(m)
@@ -339,8 +370,10 @@ function print_active_constraints!(m::JuMP.Model)
 
 end
 
-function get_inactive_constraints(m::JuMP.Model; slack_filter=1e-9)
 
+""""Returns the set of inactive constraints (non-zero slack) of an optimised model"""
+function get_inactive_constraints(m::JuMP.Model; slack_filter=1e-9)
+    
     slack = get_slack(m)
     
     function within_filter(x)
@@ -350,6 +383,8 @@ function get_inactive_constraints(m::JuMP.Model; slack_filter=1e-9)
     sort(collect(Set(find(within_filter,slack))))
 end
 
+
+"""Prints the set of inactive constraints with slack (should be non-zero) to the console"""
 function print_inactive_constraints!(m::JuMP.Model; slack_filter=1e-9)
 
     slack = get_slack(m)
@@ -361,21 +396,9 @@ function print_inactive_constraints!(m::JuMP.Model; slack_filter=1e-9)
 
 end
 
-# choosing individual snapshots
-function set_snapshots_start_end!(network, starting::String, ending::String)
 
-    df = network.snapshots
-    network.snapshots = df[(df[:name].<=ending).&(df[:name].>=starting),:]
-
-    df = network.generators_t["p_max_pu"]
-    network.generators_t["p_max_pu"] = df[(df[:name].<=ending).&(df[:name].>=starting),:]
-
-    df = network.loads_t["p_set"]
-    network.loads_t["p_set"] = df[(df[:name].<=ending).&(df[:name].>=starting),:]
-
-end
-
-# simple approach, more sophisticated method would cluster
+# simple approach; preferred approach is preprocessing the snapshots e.g. with the tsam package
+"""Samples snapshots at specified rate and adapts snapshot weights uniformly"""
 function set_snapshots_sampling!(network, sampling_rate)
     T = nrow(network.snapshots)
     rows_to_delete = setdiff(collect(1:T),collect(1:sampling_rate:T))
@@ -385,66 +408,20 @@ function set_snapshots_sampling!(network, sampling_rate)
     network.snapshots[:weightings] *= sampling_rate
 end
 
-# TODO: just for one line type at the moment and same for all lines
+
+# TODO: support for multiple line types; currently frequently used line type is hard coded
+"""Sets the maximum number of extendable circuits for each line"""
 function set_maximum_extendable_circuits!(network; additional_num_parallel=0, extension_factor=1)
     for i=1:nrow(network.lines)
+        # allow some buffer to avoid rounding issues
         network.lines[:s_nom_max][i] =  extension_factor*network.lines[:s_nom][i] + additional_num_parallel*1698.11
     end
 end
 
-function constraintmatrix(model::JuMP.Model; nz::Bool=false)
-    constraintmatrix = MathProgBase.getconstrmatrix(internalmodel(model))
-    cm = deepcopy(constraintmatrix)
-    if nz
-        nzcm = findnz(cm)
-        for (i, j) in zip(nzcm[1],nzcm[2])
-            cm[i,j] = 1.0
-        end
-    end
-    return cm
-end
 
-
-
-function plot_cm_nonzeroentries(model::JuMP.Model; cm=nothing)
-    if cm == nothing
-        cm = constraintmatrix(model, nz=true)
-        colSwitch = colswitch_cm(model)
-        println(colSwitch)
-        cm = full(cm)[:,colSwitch]
-    end
-    xs = [string("x",i) for i = 1:size(cm)[1]]
-    ys = [string("y",i) for i = 1:size(cm)[2]]
-    heatmap(xs,ys,cm',aspect_ratio=1, color=:Greys, size=(1300,800), title="Non-zero entries of constraint matrix")
-end
-
-function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6, cm=nothing)
-    if cm == nothing
-        cm = constraintmatrix(model, nz=false)
-    end
-    elements = findnz(cm)[3]
-    min=minimum(abs.(elements))
-    max=maximum(abs.(elements))
-    filter!(x -> x <= cutoff, elements)
-    filter!(x -> x >= -cutoff, elements)
-    histogram(elements,nbins=100, title="Distribution of values in constraint matrix -- absolute value range: [$min, $max]",
-        xlabel="value / coefficient", ylabel="frequency", size=(1400,800), legend=false, color=:grays)
-end
-
-function colswitch_cm(model::JuMP.Model)
-    model.objDict # produces model.colNames
-    variables = model.colNames
-    println(model.colNames)
-    switches = []
-    T = size(model[:LN_ext])[2]
-    push!(switches,find(x->x==true, .![contains(i, ",") for i in variables]))
-    for t=1:T
-        push!(switches,find(x->x==true, [contains(i, ",$t]") for i in variables]))
-    end
-    return reverse(vcat(switches...))
-end
-
+"""Returns the set of candidate lines (number of additional circuits) for each line"""
 function line_extensions_candidates(network)
+    # candidates set always includes 0
     candidates = Array{Int64,1}[]
     lines = network.lines
     N_ext_LN = sum(.!(.!lines[:s_nom_extendable]))
@@ -461,6 +438,68 @@ function line_extensions_candidates(network)
     return candidates
 end
 
+
+"""Returns the constraint matrix of a model.
+If nz=true: entries have value 0 or 1
+If nz=false: entries have value of corresponding parameter
+"""
+function constraintmatrix(model::JuMP.Model; nz::Bool=false)
+    constraintmatrix = MathProgBase.getconstrmatrix(internalmodel(model))
+    cm = deepcopy(constraintmatrix)
+    if nz
+        nzcm = findnz(cm)
+        for (i, j) in zip(nzcm[1],nzcm[2])
+            cm[i,j] = 1.0
+        end
+    end
+    return cm
+end
+
+"""Plots the constraint matrix"""
+function plot_cm_nonzeroentries(model::JuMP.Model; cm=nothing)
+    if cm == nothing
+        cm = constraintmatrix(model, nz=true)
+        colSwitch = colswitch_cm(model)
+        println(colSwitch)
+        cm = full(cm)[:,colSwitch]
+    end
+    xs = [string("x",i) for i = 1:size(cm)[1]]
+    ys = [string("y",i) for i = 1:size(cm)[2]]
+    heatmap(xs,ys,cm',aspect_ratio=1, color=:Greys, size=(1300,800), title="Non-zero entries of constraint matrix")
+end
+
+
+"""Plots the value distribution of the constraint matrix"""
+function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6, cm=nothing)
+    if cm == nothing
+        cm = constraintmatrix(model, nz=false)
+    end
+    elements = findnz(cm)[3]
+    min=minimum(abs.(elements))
+    max=maximum(abs.(elements))
+    filter!(x -> x <= cutoff, elements)
+    filter!(x -> x >= -cutoff, elements)
+    histogram(elements,nbins=100, title="Distribution of values in constraint matrix -- absolute value range: [$min, $max]",
+        xlabel="value / coefficient", ylabel="frequency", size=(1400,800), legend=false, color=:grays)
+end
+
+
+"""Switches columns of constraint matrix for organised plotting"""
+function colswitch_cm(model::JuMP.Model)
+    model.objDict # produces model.colNames
+    variables = model.colNames
+    println(model.colNames)
+    switches = []
+    T = size(model[:LN_ext])[2]
+    push!(switches,find(x->x==true, .![contains(i, ",") for i in variables]))
+    for t=1:T
+        push!(switches,find(x->x==true, [contains(i, ",$t]") for i in variables]))
+    end
+    return reverse(vcat(switches...))
+end
+
+
+"""Calculates the Big-M parameters for each line using the assumed maximum angle difference."""
 function bigm(cnstr::Symbol, network; max_angle_diff::Float64=pi/6)
                 
     lines = network.lines
@@ -487,6 +526,8 @@ function bigm(cnstr::Symbol, network; max_angle_diff::Float64=pi/6)
 
 end
 
+
+"""Retrieves all variable symbols (names) of a model"""
 function getvariables(m::JuMP.Model)
     return [k for (k,v) in m.objDict 
              if issubtype(eltype(v), JuMP.Variable) &&
@@ -495,6 +536,8 @@ function getvariables(m::JuMP.Model)
            ]
 end
 
+
+"""Retrieves all constraint symbols (names) of a model"""
 function getconstraints(m::JuMP.Model)
     objs = [k for (k,v) in m.objDict if issubtype(eltype(v), JuMP.ConstraintRef)]
     constraints = []
@@ -512,12 +555,17 @@ function getconstraints(m::JuMP.Model)
     return constraints
 end
 
+
 JuMP.rhs(constraint::JuMP.ConstraintRef) = JuMP.rhs(LinearConstraint(constraint))
+
 
 JuMP.rhs(constraint::Array) = reshape([JuMP.rhs(constraint[1])],1,1) # special case for global constraints
 
+
 JuMP.rhs(constraints::JuMP.JuMPArray{JuMP.ConstraintRef}) = JuMP.JuMPArray(JuMP.rhs.(constraints.innerArray), constraints.indexsets)
 
+
+"""Computes the constant term of a Benders cut using the uncoupled constraints of the subproblems."""
 function get_benderscut_constant(m::JuMP.Model, uncoupled_constraints::Array{Any,1})
     constant = 0
     for constr in uncoupled_constraints
@@ -530,6 +578,7 @@ function get_benderscut_constant(m::JuMP.Model, uncoupled_constraints::Array{Any
     return constant
 end
 
+"""Computes the constant term of a Benders cut using the uncoupled constraints of the subproblems."""
 function get_benderscut_constant(m::Array{JuMP.Model,1}, uncoupled_constraints::Array{Any,1})
     sum = 0
     for i=1:length(m)
@@ -538,10 +587,13 @@ function get_benderscut_constant(m::Array{JuMP.Model,1}, uncoupled_constraints::
     return sum
 end
 
+
 getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
+
 
 function getduals_flows(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
     x=getdual(getindex.(m, cnstr))
+    # TODO: transform dictionary to array
     # z = []
     # for t=1:length(x)
     #     size = maximum(keys(x[t]))
@@ -558,6 +610,8 @@ function getduals_flows(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=fa
     return x
 end
 
+
+"""Specifies the rescaling factors applied to different equations of the problem"""
 function rescaling_factors(rescaling::Bool)
     # TODO: adapt rescaling factors
     dict = Dict(
@@ -573,6 +627,8 @@ function rescaling_factors(rescaling::Bool)
     return dict
 end
 
+
+"""Filters extremely small time series values (e.g. p_max_pu) below a threshold"""
 function filter_timedependent_extremes!(z, threshold::Float64)
     for c in z.df.columns[2:end] 
         c[(c.<threshold).&(c.!=0)] = threshold 
@@ -580,6 +636,8 @@ function filter_timedependent_extremes!(z, threshold::Float64)
     return z.df
 end
 
+
+"""Organises optimisation output"""
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 
     joint ? sm = m : nothing
@@ -672,9 +730,6 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
 
         storage_units[:p_nom_opt] = deepcopy(storage_units[:p_nom])
         network.storage_units[ext_sus_b,:p_nom_opt] = getvalue(m[:SU_p_nom])
-        # network.storage_units_t["spill"] = spillage
-        # network.storage_units_t["spill"][:,spill_sus_b] = names!(DataFrame(transpose(getvalue(SU_spill))),
-        #                     names(spillage)[spill_sus_b])
         network.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),
                             Symbol.(storage_units[:name]))
         network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(SU_dispatch .- SU_store))),
@@ -690,18 +745,9 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     println("\nObjective:\t$(m.objVal)")
     println("TEP share:\t$(tep_cost/m.objVal*100) %")
 
-    # co2limit
     generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
     carrier_index(carrier) = findin(generators[:carrier], carrier)
-
-    co2 =   sum(sum(dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
-        getvalue(G[carrier_index(nonnull_carriers),t])) for t=1:T)
-        * select_names(network.carriers, [carrier])[:co2_emissions]
-        for carrier in network.carriers[:name])
-
-    println("GHG emissions:\t$(co2[1]) t")
-    
 
     # renewable energy target
     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
@@ -709,16 +755,6 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
 
     println("RES share:\t$(res*100) %")
-
-
-    # mwkm transmission limit
-    # try
-    #     mwkm = dot(getvalue(m[:LN_s_nom]),lines[:length]) / dot(lines[:s_nom],lines[:length])
-    #     println("Transmission line volume is increased by factor $mwkm")
-    # catch e
-    #     println("Could not calculate transmission line volume increase.")
-    #     continue
-    # end
 
     # curtailment
     sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)

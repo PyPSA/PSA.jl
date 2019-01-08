@@ -966,9 +966,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                             ) <= rf * bigm_lower[l] * (c == 0 ? 0 : 1)
                         )
 
-                        @constraint(m, flows_nonext[l=1:(sum(fix_lines_b)), t=T_vars_curr],
-                            LN[l, t_vars_curr] == 
-                            lines[:x_pu][l]^(-1) * ( THETA[busidx[lines[:bus0][l]], t_vars_curr] - THETA[busidx[lines[:bus1][l]], t_vars_curr] ) 
+                        @constraint(m, flows_fix[l=1:(sum(fix_lines_b)), t=T_vars_curr],
+                            rf * LN[l, t_vars_curr] == 
+                            rf * lines[:x_pu][l]^(-1) * ( THETA[busidx[lines[:bus0][l]], t_vars_curr] - THETA[busidx[lines[:bus1][l]], t_vars_curr] ) 
                         ) 
                         
                         @constraint(m, slack[t=T_vars_curr], THETA[1,t_vars_curr] == 0)

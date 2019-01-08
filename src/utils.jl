@@ -310,7 +310,7 @@ function get_iis(m::JuMP.Model)
     m.linconstr[find(iis_constrs)]
 end
 
-# TODO: get slack for different solvers!
+# TODO: get slack for different solvers (only works for Gurobi)!
 # if slack is zero, relaxation would improve results
 function get_slack(m::JuMP.Model)
     Gurobi.get_dblattrarray( m.internalModel.inner, "Slack", 1, Gurobi.num_constrs(m.internalModel.inner))
@@ -566,7 +566,8 @@ function rescaling_factors(rescaling::Bool)
         :bounds_LN => 1e3,
         :bounds_LK => 1e2,
         :flows => 1,
-        :benderscut => 1e-3
+        :benderscut => 1e-3,
+        :objective => 1
     )
     !rescaling ? for k in keys(dict) dict[k] = 1 end : nothing
     return dict
@@ -574,7 +575,6 @@ end
 
 function filter_timedependent_extremes!(z, threshold::Float64)
     for c in z.df.columns[2:end] 
-        println(c)
         c[(c.<threshold).&(c.!=0)] = threshold 
     end
     return z.df

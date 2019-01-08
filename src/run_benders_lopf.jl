@@ -371,11 +371,11 @@ function run_benders_lopf(network, solver;
             if investment_type=="integer_bigm"
 
                 cut_flows_lower = sum(  
-                        duals_flows_lower[t][l,c,t] * rf_dict[:flows] *( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
+                        duals_flows_lower[slave_id][l,c,t] * rf_dict[:flows] *( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows_upper = sum(  
-                        duals_flows_upper[t][l,c,t] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
+                        duals_flows_upper[slave_id][l,c,t] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows = cut_flows_lower + cut_flows_upper

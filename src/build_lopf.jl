@@ -1361,9 +1361,12 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         if t_vars_curr==T_params_length
             #println("Adding objective to the model.")
 
+            rf = rf_dict[:objective]
+
             if benders!="master" && benders!="slave"
     
                 @objective(m, Min,
+                    rf * (
                         sum(network.snapshots[:weightings][t] * dot(generators[:marginal_cost], G[:,t]) for t=1:T_params_length)
                         + dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
                         + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
@@ -1381,11 +1384,13 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                         + sum(network.snapshots[:weightings][t] * dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=1:T_params_length)
                         + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                         + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
+                    )
                 )
     
             elseif benders == "master"
     
                 @objective(m, Min,
+                    rf * (
                     dot(generators[ext_gens_b,:capital_cost], G_p_nom[:] )
                     + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
             
@@ -1400,7 +1405,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             
                     + dot(stores[ext_stores_b, :capital_cost], ST_e_nom[:])
                     + dot(stores[fix_stores_b,:capital_cost], stores[fix_stores_b,:e_nom])
-            
+                    )
                     + sum( ALPHA[g] for g=1:N_cuts )
                 )
 
@@ -1408,15 +1413,19 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
                 
                 if sn>0
                     @objective(m, Min,
+                        rf * (
                               sum( network.snapshots[:weightings][t] * dot(generators[:marginal_cost], G[:,t_vars_curr]) for t=T_vars_curr )
                             + sum( network.snapshots[:weightings][t] * dot(storage_units[:marginal_cost], SU_dispatch[:,t_vars_curr]) for t=T_vars_curr )
                             + sum( network.snapshots[:weightings][t] * dot(stores[:marginal_cost], ST_dispatch[:,t_vars_curr]) for t=T_vars_curr )
+                        )
                     )
                 else
                     @objective(m, Min,
+                        rf * (
                               sum( network.snapshots[:weightings][t] * dot(generators[:marginal_cost], G[:,t]) for t=T_vars_curr )
                             + sum( network.snapshots[:weightings][t] * dot(storage_units[:marginal_cost], SU_dispatch[:,t]) for t=T_vars_curr )
                             + sum( network.snapshots[:weightings][t] * dot(stores[:marginal_cost], ST_dispatch[:,t]) for t=T_vars_curr )
+                        )
                     )
                 end
     

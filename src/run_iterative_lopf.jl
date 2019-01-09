@@ -47,7 +47,7 @@ function run_iterative_lopf(network, solver, iterations;
         println("Run iteration $k")
 
         if decomposition=="benders" && blockmodel==false
-            m = run_lazybenders_lopf(network, solver,
+            m, sm = run_lazybenders_lopf(network, solver,
                 rescaling=rescaling,
                 formulation=formulation,
                 investment_type=investment_type,

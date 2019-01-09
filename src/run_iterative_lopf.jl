@@ -46,13 +46,23 @@ function run_iterative_lopf(network, solver, iterations;
 
         println("Run iteration $k")
 
-        m = run_lopf(network, solver; 
-            rescaling=rescaling,
-            formulation=formulation,
-            investment_type=investment_type,
-            blockmodel=blockmodel,
-            decomposition=decomposition
-            )
+        if decomposition=="benders" && blockmodel==false
+            m = run_lazybenders_lopf(network, solver,
+                rescaling=rescaling,
+                formulation=formulation,
+                investment_type=investment_type,
+                split_subproblems=true,
+                individualcuts=true)
+        else
+            m = run_lopf(network, solver; 
+                rescaling=rescaling,
+                formulation=formulation,
+                investment_type=investment_type,
+                blockmodel=blockmodel,
+                decomposition=decomposition
+                )
+        end
+
 
         push!(objectives, m.objVal)
         push!(capacities, network.lines[:s_nom_opt])

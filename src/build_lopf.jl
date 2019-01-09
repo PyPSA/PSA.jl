@@ -70,8 +70,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     N_ST = N_fix_ST + N_ext_ST
     
     # TODO: adapt if not all lines are extendable
-    if N_fix_LN > 0
-        error("Currently all lines have to be extendable!")
+    if N_fix_LN > 0 && investment_type!="continuous"
+        error("Currently all lines have to be extendable for investment type $investment_type!")
     end
     
     if N_com_G > 0

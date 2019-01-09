@@ -6,7 +6,7 @@ function run_iterative_lopf(network, solver, iterations;
     post_discretization::Bool=false,
     discretization_thresholds::Array{Float64,1}=[0.2,0.3],
     blockmodel=false,
-    decomposition="benders"
+    decomposition=""
     )
 
     # precalculations and initialisation

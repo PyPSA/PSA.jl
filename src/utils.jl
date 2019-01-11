@@ -522,7 +522,7 @@ function bigm(cnstr::Symbol, network; max_angle_diff::Float64=pi/6)
     
     length(bigm) != nrow(lines) ? error("Sizes of Big-M parameter and number of lines do not match!") : nothing
     
-    return bigm
+    return 10*bigm
 
 end
 

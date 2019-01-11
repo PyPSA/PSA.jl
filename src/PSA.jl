@@ -212,7 +212,6 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
     catch
         println("No link geometry to delete!")
     end
-    println(network.links)
 
     return network
 

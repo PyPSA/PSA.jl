@@ -226,7 +226,7 @@ function export_network(network, folder)
         for df_name=keys(getfield(network,field_t))
             if nrow(getfield(network,field_t)[df_name])>0
                 field = Symbol(String(field_t)[1:end-2])
-                if(field == Symbol("generators") || field == Symbol("lines"))
+                if ( field == Symbol("generators") || field == Symbol("lines") || field == Symbol("links") )
                     CSV.write("$folder/$field-$df_name.csv", hcat(DataFrame(name = network.snapshots[:name]), getfield(network,field_t)[df_name]))
                 else
                     CSV.write("$folder/$field-$df_name.csv", getfield(network,field_t)[df_name])

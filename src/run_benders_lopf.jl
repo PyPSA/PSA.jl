@@ -258,7 +258,7 @@ function run_benders_lopf(network, solver;
 
                         JuMP.setRHS(model_slave[:flows_upper][l,c,t],rhs)
                         
-                        rhs = rf * ( LN_opt_current[l,c] - 1 ) * bigm_lower[l]
+                        rhs = rf * ( 1 - LN_opt_current[l,c] ) * bigm_lower[l]
                         if (rhs < 1e-5 && rhs > -1e-5)
                             rhs = 0.0
                         end

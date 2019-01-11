@@ -201,6 +201,19 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
         setfield!(network, field, getfield(initializer, field))
     end
 
+    # TODO: temporary remove of links tags, since they distort output
+    try
+        delete!(network.links, :tags)
+    catch
+        println("No link tags to delete!")
+    end
+    try
+        delete!(network.links, :geometry)
+    catch
+        println("No link geometry to delete!")
+    end
+    println(network.links)
+
     return network
 
 end

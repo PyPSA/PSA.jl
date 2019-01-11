@@ -34,6 +34,12 @@ function run_lopf(network, solver;
         write_optimalsolution(network, m)
     end
 
+    # print iis if infeasible
+    if status == :Infeasible && typeof(solver) == Gurobi.GurobiSolver
+        println("WARNING: Subproblem $i is infeasible. The IIS is:")
+        println(get_iis(models_slave[i]))
+    end
+
     return m
 
 end

@@ -140,7 +140,12 @@ function run_benders_lopf(network, solver;
         # cases of master problem
         if status_master == :Infeasible
 
-            println("The problem is infeasible.")
+            # print iis if infeasible
+            if typeof(solver) == Gurobi.GurobiSolver
+                println("ERROR: Master problem is infeasible. The IIS is:")
+                println(get_iis(model_master))
+            end
+            
             break
 
         elseif status_master == :Unbounded
@@ -278,6 +283,14 @@ function run_benders_lopf(network, solver;
             push!(statuses_slave, solve(models_slave[i])) 
         end
         status_slave = minimum(statuses_slave)
+
+        # print iis if infeasible
+        for i in length(statuses_slave)
+            if statuses_slave[i] == :Infeasible && typeof(solver) == Gurobi.GurobiSolver
+                println("WARNING: Subproblem $i is infeasible. The IIS is:")
+                println(get_iis(models_slave[i]))
+            end
+        end
 
         # get results of slave problems
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)

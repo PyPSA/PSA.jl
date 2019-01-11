@@ -265,6 +265,14 @@ function run_lazybenders_lopf(network, solver;
         end
         status_slave = minimum(statuses_slave)
 
+        # print iis if infeasible
+        for i in length(statuses_slave)
+            if statuses_slave[i] == :Infeasible && typeof(solver) == Gurobi.GurobiSolver
+                println("WARNING: Subproblem $i is infeasible. The IIS is:")
+                println(get_iis(models_slave[i]))
+            end
+        end
+
         # get results of slave problems
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)
         duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext)
@@ -402,6 +410,12 @@ function run_lazybenders_lopf(network, solver;
 
     addlazycallback(model_master, benderscut)
     status_master = solve(model_master);
+
+    # print iis if infeasible
+    if status_master == :Infeasible && typeof(solver) == Gurobi.GurobiSolver
+        println("ERROR: Master problem is infeasible. The IIS is:")
+        println(get_iis(model_master))
+    end
 
     ##################
     # output results #

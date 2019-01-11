@@ -239,16 +239,20 @@ function run_lazybenders_lopf(network, solver;
                 if investment_type=="integer_bigm"
                    
                     for c in candidates[l]
+
+                        rhs = rf * ( LN_opt_current[l,c] - 1 ) * bigm_upper[l]
+                        if (rhs < 1e-5 && rhs > -1e-5)
+                            rhs = 0.0
+                        end
+
+                        JuMP.setRHS(model_slave[:flows_upper][l,c,t],rhs)
                         
-                        JuMP.setRHS(
-                            model_slave[:flows_upper][l,c,t],
-                            rf * ( LN_opt_current[l,c] - 1 ) * bigm_upper[l] 
-                        )
-                        
-                        JuMP.setRHS(
-                            model_slave[:flows_lower][l,c,t],
-                            rf * ( 1 - LN_opt_current[l,c] ) * bigm_lower[l] 
-                        )
+                        rhs = rf * ( LN_opt_current[l,c] - 1 ) * bigm_lower[l]
+                        if (rhs < 1e-5 && rhs > -1e-5)
+                            rhs = 0.0
+                        end
+
+                        JuMP.setRHS(model_slave[:flows_lower][l,c,t], rhs)
 
                     end
 

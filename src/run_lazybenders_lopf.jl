@@ -10,8 +10,8 @@ function run_lazybenders_lopf(network, solver;
     rescaling::Bool = false,
     split_subproblems::Bool = false,
     individualcuts::Bool = false,
-    tolerance::Float64 = 1e-1,
-    mip_gap::Float64 = 1e-10,
+    tolerance::Float64 = 100.0,
+    mip_gap::Float64 = 1e-8,
     bigM::Float64 = 1e12,
     update_x::Bool = false
     )
@@ -296,7 +296,7 @@ function run_lazybenders_lopf(network, solver;
 
         # go through cases of subproblems
         if (status_slave == :Optimal && 
-            objective_slave_current - ALPHA_current <= tolerance)
+            abs(objective_slave_current - ALPHA_current) <= tolerance)
 
             println("Optimal solution of the original problem found")
             println("The optimal objective value is ", objective_master_current)

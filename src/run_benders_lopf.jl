@@ -11,8 +11,8 @@ function run_benders_lopf(network, solver;
     update_x::Bool = false, 
     split_subproblems::Bool = false, 
     individualcuts::Bool = false,
-    tolerance::Float64 = 1e-1,
-    mip_gap::Float64 = 1e-11,
+    tolerance::Float64 = 100.0,
+    mip_gap::Float64 = 1e-8,
     bigM::Float64 = 1e12,
     max_iterations::Int64 =  1000,
     relax::Bool = false,
@@ -330,7 +330,7 @@ function run_benders_lopf(network, solver;
 
         # go through cases of subproblems
         if (status_slave == :Optimal && 
-            objective_slave_current - ALPHA_current <= tolerance)
+            abs(objective_slave_current - ALPHA_current) <= tolerance)
 
             push!(lbs, ALPHA_current)
             push!(ubs, objective_slave_current)

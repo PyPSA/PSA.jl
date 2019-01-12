@@ -367,7 +367,7 @@ function run_lazybenders_lopf(network, solver;
             cut_const = get_benderscut_constant(models_slave[slave_id],uncoupled_slave_constrs)
 
             if (status_slave == :Optimal &&
-                objective_slave_current - ALPHA_current > tolerance)
+                abs(objective_slave_current - ALPHA_current) > tolerance)
 
                 rf = rf_dict[:benderscut]
 

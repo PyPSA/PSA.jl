@@ -588,25 +588,25 @@ function get_benderscut_constant(m::Array{JuMP.Model,1}, uncoupled_constraints::
 end
 
 
-getduals(m::Array{JuMP.Model,1}, cnstr::Symbol) = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
+function getduals(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
+    z = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
+    filter_b ? z[(z.<1e-3).&(z.>-1e-3)] = 0.0 : nothing
+    return z
+end
 
 
 function getduals_flows(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
     x=getdual(getindex.(m, cnstr))
-    # TODO: transform dictionary to array
-    # z = []
-    # for t=1:length(x)
-    #     size = maximum(keys(x[t]))
-    #     y = zeros(size[1], size[2]+1, 1)
-    #     @show(y)
-    #     for (l,c,ts) in keys(x[t])
-    #         y[l,c+1,1] =  x[t][l,c,t]
-    #     end
-    #     push!(z, y)
-    # end
-    # z = vcat(z...)
-    # # filter small values
-    # filter_b ? z[(z.<1e-3).&(z.>-1e-3)] = 0.0 : nothing
+    if filter_b
+        for t=1:length(x)
+             for (l,c,ts) in keys(x[t])
+                z = x[t][l,c,ts]
+                if z>-1e-4 && z<1e-4
+                    x[t][l,c,ts] = 0.0
+                end
+             end
+        end
+    end
     return x
 end
 

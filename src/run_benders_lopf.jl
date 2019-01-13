@@ -23,7 +23,8 @@ function run_benders_lopf(network, solver;
     inexact_mip_gap::Float64 = 1e-5,
     inexact_threshold::Float64 = 1e5,
     remove_inactive::Bool = false,
-    remove_inactive_threshold::Float64 = 1e2
+    remove_inactive_threshold::Float64 = 1e2,
+    filter_duals::Bool = false
     )
 
     #################
@@ -298,19 +299,19 @@ function run_benders_lopf(network, solver;
 
         # get results of slave problems
         objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)
-        duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext)
-        duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext)
-        duals_lower_bounds_LN_ext = getduals(models_slave, :lower_bounds_LN_ext)
-        duals_upper_bounds_LN_ext = getduals(models_slave, :upper_bounds_LN_ext)
+        duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext, filter_b=filter_duals)
+        duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext, filter_b=filter_duals)
+        duals_lower_bounds_LN_ext = getduals(models_slave, :lower_bounds_LN_ext, filter_b=filter_duals)
+        duals_upper_bounds_LN_ext = getduals(models_slave, :upper_bounds_LN_ext, filter_b=filter_duals)
 
         if N_ext_LK > 0
-            duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext)
-            duals_upper_bounds_LK_ext = getduals(models_slave, :upper_bounds_LK_ext)
+            duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext, filter_b=filter_duals)
+            duals_upper_bounds_LK_ext = getduals(models_slave, :upper_bounds_LK_ext, filter_b=filter_duals)
         end
         
         if investment_type=="integer_bigm"
-            duals_flows_upper = getduals_flows(models_slave, :flows_upper)
-            duals_flows_lower = getduals_flows(models_slave, :flows_lower)
+            duals_flows_upper = getduals_flows(models_slave, :flows_upper, filter_b=filter_duals)
+            duals_flows_lower = getduals_flows(models_slave, :flows_lower, filter_b=filter_duals)
         end
 
         ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_cuts)

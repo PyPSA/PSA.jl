@@ -175,6 +175,32 @@ function run_benders_lopf(network, solver;
                 LN_s_nom_current[l] = (1.0+ceil(LN_inv_current[l])/network.lines[ext_lines_b,:num_parallel][l]) * network.lines[ext_lines_b,:s_nom][l]
             end
         end
+
+        # if updatex create new subproblems
+        if update_x
+            network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
+            models_slave = JuMP.Model[]
+            if !split_subproblems
+                push!(models_slave, 
+                    build_lopf(network, solver, 
+                        benders="slave",
+                        formulation=formulation,
+                        rescaling=rescaling,
+                    )
+                )
+            else
+                for t=1:T
+                    push!(models_slave, 
+                        build_lopf(network, solver, 
+                            benders="slave",
+                            formulation=formulation,
+                            rescaling=rescaling,
+                            snapshot_number=t
+                        )
+                    )
+                end
+            end
+        end
      
         # adapt RHS of slave model with solution from master problem
      
@@ -272,14 +298,6 @@ function run_benders_lopf(network, solver;
 
             end
 
-        end
-
-        if update_x
-            network.lines[ext_lines_b,:][:x_pu] .= network.lines[ext_lines_b,:][:x_pu] .* network.lines[ext_lines_b,:][:s_nom] ./ LN_s_nom_current
-            model_slave = build_lopf(network, solver, 
-                benders="slave",
-                formulation=formulation
-            )
         end
 
         # solve slave problems

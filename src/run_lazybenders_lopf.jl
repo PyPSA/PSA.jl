@@ -242,14 +242,14 @@ function run_lazybenders_lopf(network, solver;
                     for c in candidates[l]
 
                         rhs = rf * ( LN_opt_current[l,c] - 1 ) * bigm_upper[l]
-                        if (rhs < 10.0 && rhs > -10.0)
+                        if (rhs < 1e-4 && rhs > -1e-4)
                             rhs = 0.0
                         end
 
                         JuMP.setRHS(model_slave[:flows_upper][l,c,t],rhs)
                         
                         rhs = rf * ( 1 - LN_opt_current[l,c] ) * bigm_lower[l]
-                        if (rhs < 10.0 && rhs > -10.0)
+                        if (rhs < 1e-4 && rhs > -1e-4)
                             rhs = 0.0
                         end
 

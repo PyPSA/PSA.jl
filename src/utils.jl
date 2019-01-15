@@ -590,7 +590,7 @@ end
 
 function getduals(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
     z = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
-    filter_b ? z[(z.<1e-3).&(z.>-1e-3)] = 0.0 : nothing
+    filter_b ? z[(z.<1e-5).&(z.>-1e-5)] = 0.0 : nothing
     return z
 end
 
@@ -601,7 +601,7 @@ function getduals_flows(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=fa
         for t=1:length(x)
              for (l,c,ts) in keys(x[t])
                 z = x[t][l,c,ts]
-                if z>-1e-4 && z<1e-4
+                if z>-1e-5 && z<1e-5
                     x[t][l,c,ts] = 0.0
                 end
              end

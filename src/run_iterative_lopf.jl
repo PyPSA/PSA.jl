@@ -4,6 +4,8 @@ function run_iterative_lopf(network, solver, iterations;
     formulation::String="angles_linear",
     investment_type::String="continuous",
     post_discretization::Bool=false,
+    seq_discretization::Bool=false,
+    seq_discretization_threshold::Float64=0.3,
     discretization_thresholds::Array{Float64,1}=[0.2,0.3],
     blockmodel=false,
     decomposition=""
@@ -12,6 +14,7 @@ function run_iterative_lopf(network, solver, iterations;
     # precalculations and initialisation
     x_0 = deepcopy(network.lines[:x])
     s_nom_0 = deepcopy(network.lines[:s_nom])
+    num_parallel_0 = deepcopy(network.lines[:num_parallel])
     objectives = Float64[]
     capacities = Array{Float64,1}[]
     reactances = Array{Float64,1}[]
@@ -74,7 +77,19 @@ function run_iterative_lopf(network, solver, iterations;
                     # reactance cannot take infinity values, instead choose prohibitively high value!
                     network.lines[:x][l] = 10e7 
                 else
-                    network.lines[:x][l] = (x_0[l] * s_nom_0[l]) / network.lines[:s_nom_opt][l]
+                    if seq_discretization
+                        num_parallel_extension = ( network.lines[:s_nom_opt][l] / s_nom_0[l] - 1 ) * num_parallel_0[l]
+                        if mod(num_parallel_extension,1) >= seq_discretization_threshold
+                            num_parallel_extension = ceil(num_parallel_extension)
+                        else 
+                            num_parallel_extension = floor(num_parallel_extension)
+                        end
+        
+                        extension_factor = num_parallel_extension / num_parallel_0[l] + 1
+                        network.lines[:x][l] = x_0[l] / extension_factor
+                    else
+                        network.lines[:x][l] = x_0[l] * s_nom_0[l] / network.lines[:s_nom_opt][l]
+                    end
                 end
             end
         end
@@ -87,7 +102,6 @@ function run_iterative_lopf(network, solver, iterations;
         # store the optimal solution of continuous optimisation
         s_nom_opt_continuous = deepcopy(network.lines[:s_nom_opt])
         s_nom_extendable_0 = deepcopy(network.lines[:s_nom_extendable])
-        num_parallel_0 = deepcopy(network.lines[:num_parallel])
         m_opt = nothing
         threshold = discretization_thresholds[1]
         threshold_opt = threshold

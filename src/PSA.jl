@@ -1,6 +1,6 @@
 module PSA
 
-using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets, DataArrays
+using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets
 
 export Network, import_nc, export_nc
 

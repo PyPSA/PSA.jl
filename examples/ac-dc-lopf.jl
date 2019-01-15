@@ -1,8 +1,6 @@
 
 # Cf. PyPSA example https://github.com/PyPSA/PyPSA/tree/master/examples/ac-dc-meshed
 
-push!(LOAD_PATH, "/home/tom/fias/lib")
-
 import PSA
 
 using Clp

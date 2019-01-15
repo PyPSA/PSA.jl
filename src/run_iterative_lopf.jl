@@ -18,13 +18,13 @@ function run_iterative_lopf(network, solver, iterations;
     m = nothing
 
     # rounding function
-    function round_line_extension!()
+    function round_line_extension!(thrs::Float64)
         for l=1:nrow(network.lines)
 
             if network.lines[:s_nom_extendable][l]
 
                 num_parallel_extension = (s_nom_opt_continuous[l] / s_nom_0[l] - 1) * num_parallel_0[l]
-                if mod(num_parallel_extension,1) >= threshold 
+                if mod(num_parallel_extension,1) >= thrs 
                     num_parallel_extension = ceil(num_parallel_extension)
                 else 
                     num_parallel_extension = floor(num_parallel_extension)
@@ -101,7 +101,7 @@ function run_iterative_lopf(network, solver, iterations;
                 println("\nSTART EVALUATING THRESHOLD $threshold\n")
 
                 # run lopf with rounded line capacities 
-                round_line_extension!()
+                round_line_extension!(threshold)
                 m_threshold = run_lopf(network, solver; rescaling=rescaling)
 
                 # compare to best solution in loop; better gets model
@@ -120,7 +120,7 @@ function run_iterative_lopf(network, solver, iterations;
         # run with optimal threshold choice
         println("\nRUNNING AGAIN WITH OPTIMAL THRESHOLD CHOICE $threshold_opt\n")
 
-        round_line_extension!()
+        round_line_extension!(threshold_opt)
         s_nom_opt_T = deepcopy(network.lines[:s_nom_opt])
         m = run_lopf(network, solver; rescaling=rescaling,formulation="angles_linear", investment_type="continuous")
 

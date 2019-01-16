@@ -165,15 +165,11 @@ end
 
 
 # auxiliary for import_nc
-function reformat(data::Union{DataArrays.DataArray, Array})
-    if typeof(data) == DataArrays.DataArray{Int8,1}
-        DataArrays.DataArray{Bool}(data)
-    elseif typeof(data) == DataArrays.DataArray{Char,2}
-        # char to string
-        data = Array{UInt8}(data)
-        squeeze(mapslices(i -> unsafe_string(pointer(i)), data, 1), 1)
-    elseif typeof(data) == DataArrays.DataArray{Int64, 1}
-        DataArrays.DataArray{Float64}(data)
+function reformat(data::Array)
+    if typeof(data) == Array{Union{Missing, Int8},1}
+        Array{Bool}(data)
+    elseif typeof(data) == Array{Union{Missing, Int64},1}
+        Array{Float64}(data)
     else
         data    
     end

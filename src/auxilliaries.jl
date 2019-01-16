@@ -8,26 +8,30 @@ copy!(networkx, pyimport("networkx" ))
 
 include("axis_utils.jl"); include("graph.jl") 
 
+function components(n::network_mutable)
+    n |> typeof |> fieldnames .|> String |> collect
+end
+
 """
-this function return all dynamic components of the network
+Returns all dynamic components of the network
 """
 function dynamic_components(n)
-    fields = String.(fieldnames(n))
-    components = []; 
+    fields = components(n)
+    dyns = []; 
     for field=fields 
-        field[end-1:end] == "_t" ? push!(components, field) : nothing  
+        field[end-1:end] == "_t" ? push!(dyns, field) : nothing  
     end
-    Symbol.(components)
+    Symbol.(dyns)
 end
 
 function static_components(n)
-    fields = String.(fieldnames(n))
-    deleteat!(fields, findin(fields, ["name"]))
-    components = []
+    fields = components(n)
+    filter!(c -> c != "name", fields)
+    stats = []
     for field=fields
-        field[end-1:end] != "_t" ? push!(components, field) : nothing
+        field[end-1:end] != "_t" ? push!(stats, field) : nothing
     end
-    Symbol.(components)
+    Symbol.(stats)
 end
 
 

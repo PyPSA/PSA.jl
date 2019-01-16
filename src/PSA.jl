@@ -1,12 +1,11 @@
 module PSA
 
-using DataFrames, CSV, LightGraphs, AxisArrays, NCDatasets
+using DataFrames, CSV, AxisArrays, NCDatasets, NamedTuples
 
 export Network, import_nc, export_nc
 
 include("lopf_pathway.jl")
-include("lopf.jl")
-# include("auxilliaries.jl") #don't know why but otherwise some functions are not imported
+# include("lopf.jl")
 
 
 mutable struct network_mutable
@@ -20,14 +19,14 @@ mutable struct network_mutable
     transformers::AxisArray
     carriers::AxisArray
     global_constraints::AxisArray
-    buses_t::Dict{String,AxisArray}
-    generators_t::Dict{String,AxisArray}
-    loads_t::Dict{String,AxisArray}
-    lines_t::Dict{String,AxisArray}
-    links_t::Dict{String,AxisArray}
-    storage_units_t::Dict{String,AxisArray}
-    stores_t::Dict{String,AxisArray}
-    transformers_t::Dict{String,AxisArray}
+    buses_t::NamedTuple
+    generators_t::NamedTuple
+    loads_t::NamedTuple
+    lines_t::NamedTuple
+    links_t::NamedTuple
+    storage_units_t::NamedTuple
+    stores_t::NamedTuple
+    transformers_t::NamedTuple
     snapshots::Array
     snapshot_weightings::AxisArray
     name::String
@@ -117,40 +116,36 @@ function Network(
             :r_pu, :g_pu, :b_pu, :x_pu_eff, :r_pu_eff, :s_nom_opt, :mu_lower, :mu_upper])),
 
 # time_dependent
-    buses_t=Dict{String,AxisArray}([("marginal_price",AxisArray([])), ("v_ang", AxisArray([])),
-            ("v_mag_pu_set",AxisArray([])), ("q", AxisArray([])),
-            ("v_mag_pu", AxisArray([])), ("p", AxisArray([])), ("p_max_pu", AxisArray([]))]),
-    generators_t=Dict{String,AxisArray}(
-            [("marginal_price",AxisArray([])), ("v_ang", AxisArray([])),
-            ("v_mag_pu_set",AxisArray([])), ("q", AxisArray([])),
-            ("v_mag_pu", AxisArray([])), ("p", AxisArray([])),
-            ("p_min_pu", AxisArray([])), ("p_max_pu", AxisArray([])),
-            ("p_nom_opt", AxisArray([]))
-            ]),
-    loads_t=Dict{String,AxisArray}([
-            ("q_set",AxisArray([])), ("p_set", AxisArray([])),
-            ("q", AxisArray([])), ("p", AxisArray([]))
-            ]),
-    lines_t=Dict{String,AxisArray}([("q0",AxisArray([])), ("q1", AxisArray([])),
-            ("p0",AxisArray([])), ("p1", AxisArray([])),
-            ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-            ("s_nom_opt", AxisArray([]))
-            ]),
-    links_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
-            ("p0",AxisArray([])), ("p1", AxisArray([])),
-            ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-            ("efficiency",AxisArray([])), ("p_set", AxisArray([]))
-            ,("p_nom_opt", AxisArray([]))]),
-
-    storage_units_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
-        ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-        ("efficiency",AxisArray([])), ("p_set", AxisArray([]))]),
-    stores_t=Dict{String,AxisArray}([("e_min_pu",AxisArray([])), ("e_max_pu", AxisArray([])),
-        ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-        ("efficiency",AxisArray([])), ("e_set", AxisArray([]))]),
-    transformers_t= Dict{String,AxisArray}( [("q1", AxisArray([])), ("q0", AxisArray([])), ("p0", AxisArray([])),
-        ("p1", AxisArray([])), ("mu_upper", AxisArray([])), ("mu_lower", AxisArray([])),
-        ("s_max_pu", AxisArray([]))]),
+    buses_t = (marginal_price = AxisArray([]), v_ang =  AxisArray([]),
+            v_mag_pu_set = AxisArray([]), q =  AxisArray([]),
+            v_mag_pu =  AxisArray([]), p =  AxisArray([]), 
+            p_max_pu =  AxisArray([])),
+    generators_t = (
+            marginal_price = AxisArray([]), v_ang =  AxisArray([]),
+            v_mag_pu_set = AxisArray([]), q =  AxisArray([]),
+            v_mag_pu =  AxisArray([]), p =  AxisArray([]),
+            p_min_pu =  AxisArray([]), p_max_pu =  AxisArray([]),
+            p_nom_opt =  AxisArray([])),
+    loads_t = (q_set = AxisArray([]), p_set =  AxisArray([]),
+            q =  AxisArray([]), p =  AxisArray([])),
+    lines_t = (q0 = AxisArray([]), q1 =  AxisArray([]),
+            p0 = AxisArray([]), p1 =  AxisArray([]),
+            mu_lower =  AxisArray([]), mu_upper =  AxisArray([]),
+            s_nom_opt =  AxisArray([])),
+    links_t = (p_min_pu = AxisArray([]), p_max_pu =  AxisArray([]),
+            p0 = AxisArray([]), p1 =  AxisArray([]),
+            mu_lower =  AxisArray([]), mu_upper =  AxisArray([]),
+            efficiency = AxisArray([]), p_set =  AxisArray([]),
+            p_nom_opt =  AxisArray([])),
+    storage_units_t = (p_min_pu = AxisArray([]), p_max_pu =  AxisArray([]),
+            inflow = AxisArray([]), mu_lower =  AxisArray([]), mu_upper =  AxisArray([]),
+            efficiency = AxisArray([]), p_set =  AxisArray([])),
+    stores_t=(e_min_pu = AxisArray([]), e_max_pu =  AxisArray([]),
+            inflow = AxisArray([]), mu_lower =  AxisArray([]), mu_upper =  AxisArray([]),
+            efficiency = AxisArray([]), e_set =  AxisArray([])),
+    transformers_t= (q1 =  AxisArray([]), q0 =  AxisArray([]), p0 =  AxisArray([]),
+            p1 =  AxisArray([]), mu_upper =  AxisArray([]), mu_lower =  AxisArray([]),
+            s_max_pu =  AxisArray([])),
     snapshots=Array([]), 
     snapshot_weightings = AxisArray(Any[], Axis{:row}(String[])),
     name = "PSA network"
@@ -179,10 +174,10 @@ function import_nc(path)
     n = Network()
     ds = Dataset(path, )
     ds_keys = keys(ds) 
-    components = static_components(n) 
-    push!(components, "snapshots_weightings")
+    stats = static_components(n) 
+    push!(stats, "snapshots_weightings")
     found = ""
-    for comp = string.(components)
+    for comp = string.(stats)
         if any(contains.(ds_keys, comp))
             found = found * "$comp, "
             if comp == "snapshots"
@@ -211,21 +206,21 @@ function import_nc(path)
         end
     end
     info("The following static components were imported: \n $found")
-    components_t = dynamic_components(n)
+    dyns = dynamic_components(n)
     found = ""
-    for comp=components_t
+    for comp=dyns
+        comp_stat = Symbol(String(comp)[1:end-2])
+        nt = NamedTuple()
         for attr in keys(getfield(n, comp))
-            comp_stat = Symbol(String(comp)[1:end-2])
-        
             if in("$(comp)_$attr", ds_keys)
                 found = found * "$(comp)_$attr, "
-                getfield(n,comp)[attr]= (
-                        AxisArray( ds["$(comp)_$attr"][:]',
-                                Axis{:snapshots}(n.snapshots), 
-                                Axis{comp_stat}(reformat(ds["$(comp)_$(attr)_i"][:]) ) )             
-                )
+                val = AxisArray( ds["$(comp)_$attr"][:]',
+                        Axis{:snapshots}(n.snapshots), 
+                        Axis{comp_stat}(ds["$(comp)_$(attr)_i"][:]))
+                nt = setindex(nt, attr, val)
             end
         end
+        setfield!(n, comp, nt)
     end
     n.name = ds.attrib["network_name"]
     close(ds)
@@ -339,8 +334,8 @@ function import_csv(folder)
     # or skip the first column which is the snapshots-string-column
     n = Network()
     !ispath("$folder") ? error("Path not existent") : nothing
-    components = static_components(n)
-    for comp=components
+    stats = static_components(n)
+    for comp=stats
         if ispath("$folder/$comp.csv")
             if comp == :snapshots 
                 sns = CSV.read("$folder/$comp.csv")
@@ -352,8 +347,8 @@ function import_csv(folder)
             setfield!(n, Symbol(comp), df2axarray(df))
         end
     end
-    components_t = dynamic_components(n)
-    for comp_t=components_t
+    dyns = dynamic_components(n)
+    for comp_t=dyns
         for attr in keys(getfield(n, comp_t))
             comp = Symbol(String(comp_t)[1:end-2])
             if ispath("$folder/$comp-$attr.csv")
@@ -374,8 +369,8 @@ end
 
 function export_csv(n, folder)
     !ispath(folder) ? mkdir(folder) : nothing
-    components_t = [field for field=fieldnames(n) if String(field)[end-1:end]=="_t"]
-    for field_t in components_t
+    dyns = [field for field=fieldnames(n) if String(field)[end-1:end]=="_t"]
+    for field_t in dyns
         for df_name=keys(getfield(n,field_t))
             if nrow(getfield(n,field_t)[df_name])>0
                 field = Symbol(String(field_t)[1:end-2])
@@ -383,8 +378,8 @@ function export_csv(n, folder)
             end
         end
     end
-    components = [field for field=fieldnames(n) if String(field)[end-1:end]!="_t"]
-    for field in components
+    stats = [field for field=fieldnames(n) if String(field)[end-1:end]!="_t"]
+    for field in stats
         writetable("$folder/$field.csv", getfield(n, field))
     end
 end

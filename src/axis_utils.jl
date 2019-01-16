@@ -93,8 +93,3 @@ function group(A, by_array, func; axis=1)
     end
     grouped
 end
-
- @generated function setindex(x::NamedTuple,y,v::Val)
-         k = first(v.parameters)
-         k ∉ x.names ? :x : :( (x..., $k=y) )
-       end

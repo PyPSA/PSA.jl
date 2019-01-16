@@ -1,14 +1,8 @@
-using LightGraphs
-using PyCall
-using Missings
-using DataFrames
-using AxisArrays
-const networkx = PyNULL()
-copy!(networkx, pyimport("networkx" ))
+using Missings, DataFrames, AxisArrays
 
 include("axis_utils.jl"); include("graph.jl") 
 
-function components(n::network_mutable)
+function components(n)
     n |> typeof |> fieldnames .|> String |> collect
 end
 

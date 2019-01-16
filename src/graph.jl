@@ -1,7 +1,6 @@
-using LightGraphs, PyCall
-const networkx = PyNULL()
-copy!(networkx, pyimport("networkx" ))
-
+using LightGraphs
+using PyCall
+networkx = pyimport("networkx" )
 
 function to_graph(n)
     busidx = idx(n.buses)
@@ -51,10 +50,10 @@ function get_cycles(n, branches=nothing)
 
     #deal with multigraph:
     busidx = idx(n.buses)
-    line_buses = sort(string.(n.lines[:, ["bus0", "bus1"]]), 2)
+    line_buses = sort(string.(n.lines[:, ["bus0", "bus1"]]), dims=2)
     sorted_pairs = zip(line_buses[:, 1], line_buses[:, 2]) |> collect
     for p in unique(sorted_pairs)
-        lines_i = findin(sorted_pairs, [p])
+        lines_i = findall((in)([p]), sorted_pairs)
         if length(lines_i)>1
             push!(C, [busidx[p[1]], busidx[p[2]]])
         end

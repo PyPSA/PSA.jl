@@ -1,6 +1,6 @@
 module PSA
 
-using DataFrames, CSV, AxisArrays, NCDatasets, NamedTuples
+using DataFrames, CSV, AxisArrays, NCDatasets, NamedTuples, Dates
 
 export Network, import_nc, export_nc
 
@@ -181,15 +181,7 @@ function import_nc(path)
         if any(contains.(ds_keys, comp))
             found = found * "$comp, "
             if comp == "snapshots"
-                data = ds["snapshots"][:]   
-                # if ds[comp].attrib["calendar"] == "proleptic_gregorian"
-                #     # proleptic_gregorian calendar has the same dates as gregorian for 
-                #     # concerning years 
-                #     data = NCDatasets.timedecode(1:size(ds["snapshots"])[1], 
-                #             ds["snapshots"].attrib["units"])   
-                # else
-                #     data = ds["snapshots"][:]    
-                # end    
+                data = ds["snapshots"][:]
                 setfield!(n, Symbol(comp), Array(data))
             elseif comp == "snapshots_weightings"
                 data = ds["snapshots_weightings"][:]
@@ -197,7 +189,8 @@ function import_nc(path)
                 AxisArray(data, Axis{:time}(ds["snapshots"][:])))
             else
                 index = reformat(ds[comp * "_i"][:])
-                props = ds_keys[find(contains.(ds_keys,   Regex("$(comp)_(?!(i\$|t_))"))) ]
+                props = ds_keys[findall(contains.(ds_keys,
+                            Regex("$(comp)_(?!(i\$|t_))"))) ]
                 cols = props
                 setfield!(n, Symbol(comp),
                         AxisArray(  hcat([reformat(ds[key][:]) for key = props]...) ,
@@ -205,26 +198,24 @@ function import_nc(path)
             end
         end
     end
-    info("The following static components were imported: \n $found")
+    @info("The following static components were imported: \n $found")
     dyns = dynamic_components(n)
     found = ""
     for comp=dyns
         comp_stat = Symbol(String(comp)[1:end-2])
-        nt = NamedTuple()
         for attr in keys(getfield(n, comp))
             if in("$(comp)_$attr", ds_keys)
                 found = found * "$(comp)_$attr, "
                 val = AxisArray( ds["$(comp)_$attr"][:]',
                         Axis{:snapshots}(n.snapshots), 
                         Axis{comp_stat}(ds["$(comp)_$(attr)_i"][:]))
-                nt = setindex(nt, attr, val)
+                replace_attribute!(n, comp, attr, val)
             end
         end
-        setfield!(n, comp, nt)
     end
     n.name = ds.attrib["network_name"]
     close(ds)
-    info("The following dynamic components were imported: \n $(found)")
+    @info("The following dynamic components were imported: \n $(found)")
     n;
 end
 
@@ -273,14 +264,14 @@ function export_nc(n, path)
                     vartype = catch_type(data[:,col])
                     var = defVar(ds, "$(comp)_$col", vartype, ("$(comp)_i",))
                     vartype == Int8 ? var.attrib["dtype"] = "bool" : nothing 
-                    vartype != String? var[:] = collect(Missings.replace(data[:, col].data, NaN )) : nothing
-                    vartype == String? var[:] = data[:, col].data : nothing
+                    vartype != String ? var[:] = collect(Missings.replace(data[:, col].data, NaN )) : nothing
+                    vartype == String ? var[:] = data[:, col].data : nothing
                     var.attrib["FillValue"] = NaN
                 end
             end
         end
     end
-    info("The following static components were exported: \n $found")
+    @info("The following static components were exported: \n $found")
     found = ""
     for comp=dynamic_components(n)
         for attr in keys(getfield(n, comp))
@@ -309,7 +300,7 @@ function export_nc(n, path)
     ds.attrib["network_pypsa_version"] = "0.13.1"
     ds.attrib["network_name"] = n.name
 
-    info("The following dynamic components were exported: \n $(found)")
+    @info("The following dynamic components were exported: \n $(found)")
     close(ds)
 end
 

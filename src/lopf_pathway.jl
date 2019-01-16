@@ -49,7 +49,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     info("Solve network with $IP investment timesteps.")
     total_capacity_line_ext = 1e9
     info("The total capacity of the extendable lines in all investment periods is $total_capacity_line_ext .")
-    size(n.loads_t["p"])[1]!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
+    (size(n.loads_t.p)[1] != T ?
+        replace_attribute!(n, :loads_t, :p, n.loads_t.p_set) : nothing)
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -319,7 +320,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
   
 
     SU_soc_change = (storage_units[:,"efficiency_store"]' .* SU_store 
-                    -1./storage_units[:,"efficiency_dispatch"]' .* SU_dispatch 
+                    - 1/storage_units[:,"efficiency_dispatch"]' .* SU_dispatch 
                     + inflow - SU_spill)
 
 
@@ -398,7 +399,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     not_cyclic_i = find(.!stores[:,"cyclic_state_of_charge"])
 
     ST_soc_change = (stores[:,"efficiency_store"]' .* ST_store 
-                    -1./stores[:,"efficiency_dispatch"]' .* ST_dispatch 
+                    - 1/stores[:,"efficiency_dispatch"]' .* ST_dispatch 
                     + inflow - ST_spill)
 
 
@@ -471,7 +472,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
         carrier_index(carrier) = findin(string.(generators[:,"carrier"]), [carrier])
 
-        @constraint(m, sum(sum(dot(1./float.(generators[carrier_index(carrier) , "efficiency"]),
+        @constraint(m, sum(sum(dot(1/float.(generators[carrier_index(carrier) , "efficiency"]),
                     G[t,carrier_index(carrier)]) for t=1:T)
                     * n.carriers[carrier, "co2_emissions"]
                     for carrier in nonnull_carriers.axes[1].val) <=  co2_limit)

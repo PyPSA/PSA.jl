@@ -1,4 +1,5 @@
-using Missings, DataFrames, AxisArrays
+using Missings, DataFrames, AxisArrays, NamedTuples
+const axes = Base.axes
 
 include("axis_utils.jl"); include("graph.jl") 
 
@@ -10,34 +11,44 @@ end
 Returns all dynamic components of the network
 """
 function dynamic_components(n)
-    fields = components(n)
     dyns = []; 
-    for field=fields 
-        field[end-1:end] == "_t" ? push!(dyns, field) : nothing  
+    for c = components(n) 
+        c[end-1:end] == "_t" ? push!(dyns, c) : nothing  
     end
     Symbol.(dyns)
 end
 
 function static_components(n)
-    fields = components(n)
-    filter!(c -> c != "name", fields)
+    comps = components(n)
+    filter!(c -> c != "name", comps)
     stats = []
-    for field=fields
-        field[end-1:end] != "_t" ? push!(stats, field) : nothing
+    for c = comps
+        c[end-1:end] != "_t" ? push!(stats, c) : nothing
     end
     Symbol.(stats)
 end
 
 
+"""
+Replacing function, replaces attribute attr of a time-dependant component comp 
+in network n by the value val. 
+"""
+function replace_attribute!(n, comp, attr, val)
+    comp, attr = Symbol.([comp, attr])
+    setindex(getfield(n, comp), attr, val) |> nt -> setfield!(n, comp, nt)
+end
+
 function set_snapshots!(n, snapshots)
-    assert(in(typeof(snapshots), [Array{DateTime,1}, Array{Union{DateTime, Missings.Missing},1}]))
+    @assert(in(typeof(snapshots), [Array{DateTime,1}, 
+            Array{Union{DateTime, Missings.Missing},1}]))
 
     snapshots = DateTime.(snapshots)
     n.snapshots = snapshots 
-    for field=dynamic_components(n)
-        for df_name=keys(getfield(n,field))
-            if size(getfield(n,field)[df_name])[1]>0
-                getfield(n,field)[df_name] = getfield(n,field)[df_name][snapshots, :]
+    for c = dynamic_components(n)
+        for attr = keys(getfield(n, c))
+            if size(getfield(n, c)[attr])[1] > 0
+                val = getfield(n,c)[attr][snapshots, :]
+                replace_attribute!(n, c, attr, val)
             end
         end
     end
@@ -50,12 +61,13 @@ end
 # align the column order of dynamic_component (e.g generators_t{["p_max_pu"]) with row order of 
 # static component (generators[:name])
 function align_component_order!(n)
-    for comp = dynamic_components(n)
-        order = getfield(n, Symbol(String(comp)[1:end-2])).axes[1]
-        for attr in keys(getfield(n, comp))
-            if ndims(getfield(n,comp)[attr]) > 1
-                if size(getfield(n,comp)[attr])[2]== length(order) != 0
-                    getfield(n,comp)[attr]= reindex(getfield(n,comp)[attr], columns = order)
+    for c = dynamic_components(n)
+        order = getfield(n, Symbol(String(c)[1:end-2])).axes[1]
+        for attr in keys(getfield(n, c))
+            if ndims(getfield(n,c)[attr]) > 1
+                if size(getfield(n,c)[attr])[2]== length(order) != 0
+                    val = reindex(getfield(n,c)[attr], columns = order)
+                    replace_attribute!(n, c, attr, val)
                 end
             end
         end
@@ -69,7 +81,7 @@ function calculate_dependent_values!(n, f_o="1")
     end
 
     # snapshot_weighting
-    (length(n.snapshot_weightings)==0?
+    (length(n.snapshot_weightings)==0 ?
         n.snapshot_weightings = AxisArray(fill(1, size(n.snapshots)[1]),Axis{:row}(n.snapshots)) : nothing)
     
         #buses
@@ -162,24 +174,25 @@ function calculate_dependent_values!(n, f_o="1")
 end
 
 
+"""
+this function returns a matrix snapshot x component[attribute], so it collects time-varying and static attributes
+(e.g. "p_max_pu") of one component(e.g. "generators")
+"""
 function get_switchable_as_dense(n, component, attribute, snapshots=0)
-    """
-    this function returns a matrix snapshot x component[attribute], so it collects time-varying and static attributes
-    (e.g. "p_max_pu") of one component(e.g. "generators")
-    """
     snapshots==0 ? snapshots = n.snapshots : nothing
     T, = size(snapshots)
-    component_t = Symbol(component * "_t")
-    component = Symbol(component)
-    dense = getfield(n, component_t)[attribute] # time-varying data
-    if size(dense)[1] > 0  # if there is a time-varying attribute
-        static_value = getfield(n, component)[:,attribute]
-        missing_cols = setdiff(static_value.axes[1].val, dense.axes[2].val)
-        dense = assign(dense, repmat(float.(static_value[missing_cols].data)', T), missing_cols )
-        reindex(dense, columns=static_value.axes[1])
+    c_t = Symbol(component * "_t")
+    c = Symbol(component)
+    dense = getfield(n, c_t)[Symbol(attribute)] # dynamic data
+    if size(dense)[1] > 0  # if dynamic data not empty
+        static = getfield(n, c)[:, attribute]
+        missing_cols = setdiff(static.axes[1].val, dense.axes[2].val)
+        dense = assign(dense, repeat(float.(static[missing_cols].data)', T), missing_cols)
+        reindex(dense, columns=static.axes[1])
     else
-        static_value = getfield(n, component)[:,attribute]
-        AxisArray(repmat(float.(static_value.data)', T), Axis{:snapshots}(n.snapshots), static_value.axes[1])
+        static = getfield(n, c)[:, attribute]
+        AxisArray(repeat(float.(static.data)', T), 
+            Axis{:snapshots}(n.snapshots), static.axes[1])
     end
 end
 
@@ -209,9 +222,8 @@ function get_investment_periods(n, investment_period=nothing,
 
 start = n.snapshots[1]
 stop = n.snapshots[length(n.snapshots)]
-periods = Dict("h" => Base.Dates.Hour(1), "d" => Base.Dates.Day(1),
-"w" => Base.Dates.Week(1), "m" => Base.Dates.Month(1),
-"y" => Base.Dates.Year(1))
+periods = Dict("h" => Hour(1), "d" => Day(1), "w" => Week(1), 
+               "m" => Month(1), "y" => Year(1))
 
     if isa(investment_period, Array)
         t = investment_period

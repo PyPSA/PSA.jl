@@ -24,13 +24,15 @@ function assign(df::AxisArray, values, index; axis=2)
         if axis==1
             values = isa(values, Array) ? values : fill(values, (size(df)[2])) 
             AxisArray([df.data; values'], 
-                      Axis{axisnames(df)[1]}(append!(copy(axes(df)[1].val), index)),  
-                      axes(df)[2])
+                      Axis{axisnames(df)[1]}(
+                          append!(copy(AxisArrays.axes(df)[1].val), index)),  
+                            AxisArrays.axes(df)[2])
         elseif axis == 2
             values = isa(values, Array) ? values : fill(values, (size(df)[1])) 
             AxisArray([df.data values], 
-                        axes(df)[1], 
-                        Axis{axisnames(df)[2]}(append!(copy(axes(df)[2].val), index))) 
+                        AxisArrays.axes(df)[1], 
+                        Axis{axisnames(df)[2]}(
+                            append!(copy(AxisArrays.axes(df)[2].val), index))) 
         end
     end
 end

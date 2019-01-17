@@ -162,25 +162,25 @@ function calculate_dependent_values!(n)
         if sum(ismissing.(data)) != 0 || sum(skipmissing(BitArray(data.==NaN))) != 0
             info("Component $comp has $(sum(ismissing.(data))) missing values")
         end
-        size(data)[1] > 0? data[(.!ismissing.(data)) .& (data .== Inf)] = 1e7 : nothing
+        size(data)[1] > 0 ? data[(.!ismissing.(data)) .& (data .== Inf)] = 1e7 : nothing
     end
 
 end
 
 function scale_cost!(n, f_o="1")
-"""""
+"""
 this function scales the costs by the factor f_0 to make the matrix range smaller in the lopf
     
-"""""
+"""
     cost = ["maintenance_cost", "capital_cost", "marginal_cost"]
-        for comp in static_components(n)
-            data = getfield(n, comp)
-            if size(data)[1] > 0 && comp != :snapshots && comp != :snapshot_weightings
-                for c in cost
-                    c in data.axes[2][:]? data[:, c] .= data[:,c]/float(f_o) : nothing
-                end
+    for comp in static_components(n)
+        data = getfield(n, comp)
+        if size(data)[1] > 0 && comp != :snapshots && comp != :snapshot_weightings
+            for c in cost
+                c in data.axes[2][:]? data[:, c] .= data[:,c]/float(f_o) : nothing
             end
         end
+    end
 end
 
 

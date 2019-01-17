@@ -16,6 +16,7 @@ n.generators[:, "p_nom"] .= 0
 n.generators[:, "p_nom_opt"] .= 0
 
 
-solver = GurobiSolver(Crossover=0)
-m = PSA.lopf_pathway(n, solver, investment_period=n.snapshots, 
-                     invest_at_first_sn=true)
+
+# solver = GurobiSolver(Crossover=0)
+# m = PSA.lopf_pathway(n, solver, investment_period=n.snapshots, 
+#                      invest_at_first_sn=true)

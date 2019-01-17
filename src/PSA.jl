@@ -139,7 +139,7 @@ function Network(
             p_nom_opt =  AxisArray([])),
     storage_units_t = (p_min_pu = AxisArray([]), p_max_pu =  AxisArray([]),
             inflow = AxisArray([]), mu_lower =  AxisArray([]), mu_upper =  AxisArray([]),
-            efficiency = AxisArray([]), p_set =  AxisArray([])),
+            efficiency = AxisArray([]), p_set =  AxisArray([])), #max_hours missing 
     stores_t=(e_min_pu = AxisArray([]), e_max_pu =  AxisArray([]),
             inflow = AxisArray([]), mu_lower =  AxisArray([]), mu_upper =  AxisArray([]),
             efficiency = AxisArray([]), e_set =  AxisArray([])),

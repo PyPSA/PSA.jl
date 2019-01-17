@@ -75,7 +75,7 @@ function align_component_order!(n)
 end
 
 
-function calculate_dependent_values!(n, f_o="1")
+function calculate_dependent_values!(n)
     function set_default(df, col, default)
         !in(col, df.axes[2].val) ? assign(df, fill(default, (size(df)[1])), col) : df
     end
@@ -101,8 +101,9 @@ function calculate_dependent_values!(n, f_o="1")
 
     # lines
     # map the bus v_nom to lines bus0
-    vnom = []; for bus=string.(n.lines[:,"bus0"]) push!(vnom, n.buses[bus, "v_nom"]) end    
-    n.lines = assign(n.lines, vnom, "v_nom")
+    "v_nom" ∈ n.lines.axes[2].val && sum(ismissing.(n.lines[:, "v_nom"])) == 0 ? nothing : (
+        vnom = []; for bus=string.(n.lines[:,"bus0"]) push!(vnom, n.buses[bus, "v_nom"]) end;    
+        n.lines = assign(n.lines, vnom, "v_nom") )
 
     defaults = [("s_nom_extendable", false), ("s_nom_min", 0),("s_nom_max", Inf), ("s_nom", 0.),
                 ("s_nom_min", 0), ("s_nom_max", Inf), ("capital_cost", 0), ("g", 0), ("s_nom_opt", 0.), 
@@ -128,7 +129,7 @@ function calculate_dependent_values!(n, f_o="1")
                 ("p_max_pu", 1), ("marginal_cost", 0), ("efficiency_store", 1),
                 ("cyclic_state_of_charge", false), ("p_nom_extendable", false),
                 ("state_of_charge_initial", 0.), ("p_nom", 0.),("capital_cost", 0),
-                ("efficiency_dispatch", 1), ("inflow", 0), ("p_nom_opt", 0.)]
+                ("efficiency_dispatch", 1), ("inflow", 0), ("p_nom_opt", 0.), ("max_hours", 1) ]
     for (col, default) in defaults
         n.storage_units = set_default(n.storage_units, col, default)
     end
@@ -155,23 +156,33 @@ function calculate_dependent_values!(n, f_o="1")
     end
     align_component_order!(n)
 
-    # costs, minimize objective range by factor f_o 
-    # f_o = float(f_o)
-    # n.generators[:, "maintenance_cost"] .= n.generators[:, "maintenance_cost"]/f_o
-    # n.generators[:, "marginal_cost"] .= n.generators[:, "marginal_cost"]/f_o
-    # n.generators[:, "capital_cost"] .= n.generators[:, "capital_cost"]/f_o
-    # n.links[:, "capital_cost"] .= n.links[:, "capital_cost"]/f_o
-    # n.lines[:, "capital_cost"] .= n.lines[:, "capital_cost"]/f_o
-
     # check for infinity and replace for not having trouble in the lopf
-    g_inf = n.generators[:, "p_nom_max"] .== Inf
-    n.generators[g_inf, "p_nom_max"] = 1e9
-    lin_inf = n.lines[:, "s_nom_max"] .== Inf
-    n.lines[lin_inf, "s_nom_max"] = 1e9
-    link_inf = n.links[:, "p_nom_max"] .== Inf
-    n.links[link_inf, "p_nom_max"] = 1e9
+    for comp in static_components(n)
+        data = getfield(n, comp)
+        if sum(ismissing.(data)) != 0 || sum(skipmissing(BitArray(data.==NaN))) != 0
+            info("Component $comp has $(sum(ismissing.(data))) missing values")
+        end
+        size(data)[1] > 0? data[(.!ismissing.(data)) .& (data .== Inf)] = 1e7 : nothing
+    end
 
 end
+
+function scale_cost!(n, f_o="1")
+"""""
+this function scales the costs by the factor f_0 to make the matrix range smaller in the lopf
+    
+"""""
+    cost = ["maintenance_cost", "capital_cost", "marginal_cost"]
+        for comp in static_components(n)
+            data = getfield(n, comp)
+            if size(data)[1] > 0 && comp != :snapshots && comp != :snapshot_weightings
+                for c in cost
+                    c in data.axes[2][:]? data[:, c] .= data[:,c]/float(f_o) : nothing
+                end
+            end
+        end
+end
+
 
 
 """
@@ -247,9 +258,9 @@ periods = Dict("h" => Hour(1), "d" => Day(1), "w" => Week(1),
 end
 
 
-function aggregate_investments!(expr, start, var, t_ip)
+function aggregate_investments!(expr, start, var, t_ip, invest_at_first_sn)
     #set first snapshot
-    if 1 ∈ t_ip
+    if 1 ∈ t_ip # || invest_at_first_sn==true
         expr[1,:] = start + var[1, :]
     else
         expr[1,:] = start'
@@ -258,12 +269,60 @@ function aggregate_investments!(expr, start, var, t_ip)
     #set following snapshots
     T = size(expr)[1]
     for t=2:T
-        if t ∈ t_ip      
+        if t ∈ t_ip     
             ip = findin(t_ip, t)[1] 
             expr[t,:] = expr[t-1, :] + var[ip, :]
         else
             expr[t,:] = expr[t-1, :]
         end
     end
+    @show(count(iszero, expr))
+end
+ # ------------------------------------------------------------------
+function get_unused_capacity(n, dict, comp, attribute1, attribute2)
+    (data_opt, data_flow) = (getfield(n, comp)[attribute1], getfield(n,comp)[attribute2])
+    data_flow = data_flow[data_opt.axes[2]]   # get just the extendables
+    num = count(sum(round.(data_opt),1) .== 0)
+    count(sum(round.(data_opt),1) .== 0) > 0? info("in $comp there are $num unused") : nothing
+    push!(dict, string(comp, "_unused") => (data_opt - abs.(data_flow)))
+end
+
+function get_summary(n)
+    summary = Dict()
+    #get unused capacities
+    get_unused_capacity(n, summary, :generators_t, "p_nom_opt", "p")
+    get_unused_capacity(n, summary, :lines_t, "s_nom_opt", "p0")
+    get_unused_capacity(n, summary, :links_t, "p_nom_opt", "p0")
+    
+    # get p_nom_opt after carrier
+    dict = Dict(n.generators.axes[1][i] => n.generators[i, "super_carrier"] 
+            for i = 1:(size(n.generators)[1]))
+    axes = unique(collect(n.generators[:, "super_carrier"]))
+    
+
+    attribute = ["p_nom_opt"]
+    for comp in attribute
+        list_carrier = fill(0.0, (length(n.snapshots), length(axes)))
+        sum = (AxisArray(list_carrier, Axis{:time}(n.snapshots), 
+                                    Axis{:col}(axes)))
+        for sn=1:length(n.snapshots)
+            t = n.generators_t[comp].axes[1][sn]
+            for g=1:(size(n.generators_t[comp])[2])
+                generator = n.generators_t[comp].axes[2][g]
+                value = n.generators_t[comp][t,g]
+                carrier = dict[generator]
+                sum[t, carrier] += value 
+            end
+        end
+        push!(summary, string(comp, "_carrier") => sum)
+    end
+    
+    # check if emergeny generators are needed
+    em_gen= n.generators[:, "super_carrier"] .== "emergency"
+    em_p_nom_opt = round.(n.generators_t["p_nom_opt"][1, em_gen])
+    indx = find(em_p_nom_opt .!= 0)
+    length(indx)>0? @show(n.generators[em_gen, :][indx, :], n.generators_t["p_nom_opt"][:, em_gen][:,indx]) : nothing
+
+    return summary
 end
 

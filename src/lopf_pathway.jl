@@ -1,4 +1,5 @@
 using JuMP
+using Base.Test
 
 
 include("auxilliaries.jl")
@@ -47,7 +48,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     #t_ip = index of snapshot, when you invest, IP number of investments
     t_ip, IP = get_investment_periods(n, investment_period, invest_at_first_sn)
     info("Solve network with $IP investment timesteps.")
-    total_capacity_line_ext = 1e9
+    total_capacity_line_ext = 1e7
     info("The total capacity of the extendable lines in all investment periods is $total_capacity_line_ext .")
     size(n.loads_t["p"])[1]!=T ? n.loads_t["p"]=n.loads_t["p_set"] : nothing
 
@@ -56,8 +57,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 # 1. add all generators to the model
     # 1.1 set different generator types
     generators = n.generators
-    # idx_gen = idx(generators)
-    # idx_gen_r = rev_idx(generators)
 
     ext_gens_b = BitArray(n.generators[:, "p_nom_extendable"])
     com_gens_b = BitArray(n.generators[:, "commitable"])
@@ -71,6 +70,8 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     p_max_pu = get_switchable_as_dense(n, "generators", "p_max_pu") # matrix snapshot x generator["p_max_pu"]
     p_min_pu = get_switchable_as_dense(n, "generators", "p_min_pu")
 
+    @test all(broadcast(<, p_min_pu, p_max_pu)) == true
+
     p_nom = float.(n.generators[:, "p_nom"]) # Array{Any,1} formatted to Array{Float64,1}
 
     Ub_fix = p_max_pu[:,fix_gens_b] .* p_nom[fix_gens_b]'
@@ -80,7 +81,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     Lb_com = p_min_pu[:,com_gens_b] .* p_nom[com_gens_b]'
 
     Ub_ext_nom = n.generators[ext_gens_b, "p_nom_max"] # Array(number generators x 1)  p_nom_max
-    # @show((p_max_pu[1,ext_gens_b].*p_nom[ext_gens_b]) -. (p_min_pu[1,ext_gens_b].*p_nom[ext_gens_b]))
     Lb_ext_nom = n.generators[ext_gens_b, "p_nom_min"]
 
     # 1.3 add generator variables to the model
@@ -101,8 +101,13 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
     # 1.4 add time-varying upper bound for p_nom
     @expression(m, G_p_nom[t=1:T, gr=1:N_ext], 0)
+
+    for gr=1:N_ext
+        @assert p_nom[ext_gens_b][gr] <= Ub_ext_nom[gr]
+        @assert p_nom[ext_gens_b][gr] >= Lb_ext_nom[gr]
+    end
     aggregate_investments!(G_p_nom, p_nom[ext_gens_b], 
-                           G_p_nom_ext - G_p_nom_red, t_ip)
+                           G_p_nom_ext - G_p_nom_red, t_ip, true)
 
     @constraints(m, begin
         [t=1:T, gr=1:N_ext], G_p_nom[t, gr]  >= Lb_ext_nom[gr]
@@ -111,15 +116,16 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
 
     # # add fixed p_nom at a certain snapshot
-    # if length(n.generators_t["p_nom_opt"])!=0
-    #     p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
-    #     values = n.generators_t["p_nom_opt"][p_nom_set]
-    #     index = findn(p_nom_set)
-    #     for (t,gr, v) in zip(index...,values)
-    #         @constraint(m,G_p_nom[t, gr] == v)
-    #     end
+    if length(n.generators_t["p_nom_opt"])!=0
+        info("There are fixed p_nom values for the generators.")
+        p_nom_set = .!isnan.(n.generators_t["p_nom_opt"])
+        values = n.generators_t["p_nom_opt"][p_nom_set]
+        index = findn(p_nom_set)
+        for (t,gr, v) in zip(index...,values)
+            @constraint(m,G_p_nom[t, gr] == v)
+        end
 
-    # end
+    end
 
     # 1.5 set constraints for generators
 
@@ -151,6 +157,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     lines = n.lines
     ext_lines_b = BitArray(lines[:, "s_nom_extendable"])
     fix_lines_b = .!ext_lines_b
+    s_nom_min_lines_b = BitArray(lines[:, "s_nom_min"] .> 0)
 
     # 2.2 iterator bounds
     N_fix = sum(fix_lines_b)
@@ -176,19 +183,27 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
     # 2.4 add time-varying upper bound for s_nom
     @expression(m, LN_s_nom[t=1:T, l=1:N_ext], 0)
-    aggregate_investments!(LN_s_nom, s_nom[ext_lines_b], LN_s_nom_ext, t_ip)
 
-    @constraints(m, begin
-        [t=1:T, l=1:N_ext], LN_s_nom[t, l]  >= Lb_ext_nom[l]
-        [t=1:T, l=1:N_ext], LN_s_nom[t, l]  <= Ub_ext_nom[l]
-        # [ip=1:IP], sum(LN_s_nom_ext[ip, :]) <= total_capacity_line_ext/IP
-    end)
+    for l=1:N_ext
+        @assert s_nom[ext_lines_b][l] <= Ub_ext_nom[l]
+        @assert s_nom[ext_lines_b][l]  >= Lb_ext_nom[l]
+    end
+
+    aggregate_investments!(LN_s_nom, s_nom[ext_lines_b], LN_s_nom_ext, t_ip, false)
 
     # 2.4 add line constraint for extendable lines
     @constraints(m, begin
-            [t=1:T,l=1:N_ext], LN_ext[t,l] <=  LN_s_nom[t,l]
-            [t=1:T,l=1:N_ext], LN_ext[t,l] >= -LN_s_nom[t,l]
+            [t=1:T,l=1:N_ext], LN_s_nom[t,l] <=  Ub_ext_nom[l]
+            [t=1:T,l=1:N_ext], LN_s_nom[t,l] >= Lb_ext_nom[l]
+            [ip=1:IP], sum(LN_s_nom_ext[ip, :]) <= total_capacity_line_ext/IP 
     end)
+
+    Ub_ext = Ub_ext_nom' .* LN_s_nom
+
+    @constraints(m, begin
+        [t=1:T, l=1:N_ext], LN_ext[t,l] >= -LN_s_nom[t,l]
+        [t=1:T, l=1:N_ext], LN_ext[t,l] <= LN_s_nom[t,l]
+    end )
 
     LN = [LN_fix LN_ext]
     lines = lines[[find(fix_lines_b) ; find(ext_lines_b)], : ]
@@ -201,8 +216,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 # 3. add all links to the model
     # 3.1 set different link types
     links = n.links
-    # fix_links_b = BitArray(.!links[:,"p_nom_extendable"])
-    # ext_links_b = .!fix_links_b
     ext_links_b = BitArray(links[:,"p_nom_extendable"])
     fix_links_b = .!ext_links_b
 
@@ -228,7 +241,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     end
 
     @expression(m, LK_p_nom[t=1:T, l=1:N_ext], 0)
-    aggregate_investments!(LK_p_nom, p_nom[ext_links_b], LK_p_nom_ext, t_ip)
+    for l=1:N_ext
+        @assert p_nom[ext_links_b][l] <= Ub_ext_nom[l]
+        @assert p_nom[ext_links_b][l]  >= Lb_ext_nom[l]
+    end
+    aggregate_investments!(LK_p_nom, p_nom[ext_links_b], LK_p_nom_ext, t_ip, true)
 
 
     # 3.4 set constraints for extendable links
@@ -240,14 +257,12 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     @constraints(m, begin
     [t=1:T,l=1:N_ext], LK_p_nom[t,l] >= Lb_nom[l]
     [t=1:T,l=1:N_ext], LK_p_nom[t,l] <= Ub_nom[l]
-    # [ip=1:IP], sum(LK_p_nom_ext[ip, :]) <= total_capacity_line_ext/IP 
+    [ip=1:IP], sum(LK_p_nom_ext[ip, :]) <= total_capacity_line_ext/IP 
     # change later with cost limit for DC lines
     end)
 
     LK = [LK_fix LK_ext]
     links = links[[find(fix_links_b) ; find(ext_links_b)], : ]
-    # fix_links_b = .!links[:, "p_nom_extendable"]
-    # ext_links_b = .!fix_links_b
     ext_links_b = BitArray(links[:, "p_nom_extendable"])
     fix_links_b = .!ext_links_b
 
@@ -427,7 +442,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     su_bus = string.(storage_units[:, "bus"]) |> grouped_array |> add_missing_buses
 
     linkefficieny = float.(links[:, "efficiency"])
-
+    
     @constraint(m, balance[b=1:N, t=1:T], (
           sum(G[t, g_bus[buses[b]]])
         + sum(LN[t, ln_bus1[buses[b]] ])
@@ -455,11 +470,13 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 # for (sn, sub) in enumerate(weakly_connected_components(g))
 #     g_sub = induced_subgraph(g, sub)[1]
 
-    (branches, var, attribute) = (lines, LN, "x")
+    @variable(m, y, Bin)   # add binary variable
+    # lines_used = LN .!= 0
+    (branches, var, attribute) = (lines[fix_lines_b, :], LN_fix, "x_pu")
     cycles, dirs = get_directed_cycles(n, branches)
     @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
-            dot(dirs[c] .* float.(lines[cycles[c], "x_pu"]),
-                LN[t, cycles[c]]) == 0)
+            dot(dirs[c] .* float.(branches[cycles[c], attribute]) .*1e5 ,
+                var[t, cycles[c]]) == 0)
 # --------------------------------------------------------------------------------------------------------
 
 # 8. set global_constraints
@@ -476,11 +493,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
                     * n.carriers[carrier, "co2_emissions"]
                     for carrier in nonnull_carriers.axes[1].val) <=  co2_limit)
     end
-
-# # 9. add extra_functionality
-#     if extra_functionality == "constraint_p_nom_opt"
-#         @constraint(m, G_p_nom[3,3] == 400)
-#     end
 
 # --------------------------------------------------------------------------------------------------------
 # muss noch umgeschrieben werden, maintenance_cost für alle Generatoren, nicht nur extenable

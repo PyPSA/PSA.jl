@@ -144,7 +144,7 @@ function Network(
 
     storage_units_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
         ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-        ("efficiency",AxisArray([])), ("p_set", AxisArray([]))]),
+        ("efficiency",AxisArray([])), ("p_set", AxisArray([])), ("max_hours", AxisArray([]))]),
     stores_t=Dict{String,AxisArray}([("e_min_pu",AxisArray([])), ("e_max_pu", AxisArray([])),
         ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
         ("efficiency",AxisArray([])), ("e_set", AxisArray([]))]),

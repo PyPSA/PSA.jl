@@ -4,7 +4,7 @@ using PSA, JuMP, Gurobi, AxisArrays, Revise
 # n = PSA.import_nc("/home/lisa/Documents/Master-Arbeit/Code/test/three_nodes.nc")
 #include("/home/lisa/vres/jl/PSA.jl/src/auxilliaries.jl")
 
-nname = "elmod_8760h"
+nname = "elmod_3h"
 f_o = "1e3"
 n = PSA.import_nc("/home/vres/data/pypsa_models/elmod/$(nname).nc")
 PSA.calculate_dependent_values!(n)

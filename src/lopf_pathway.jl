@@ -480,11 +480,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     @show(size(branches))
     @info("Kirchhoff 1 passed")
     # Here is the problematic function
-    # cycles, dirs = get_directed_cycles(n, branches)
-    # @info("Kirchhoff 2 passed")
-    # @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
-    #         dot(dirs[c] .* float.(branches[cycles[c], attribute]) .* 1e5 ,
-    #             var[t, cycles[c]]) == 0)
+    cycles, dirs = get_directed_cycles(n, branches)
+    @info("Kirchhoff 2 passed")
+    @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
+            dot(dirs[c] .* float.(branches[cycles[c], attribute]) .* 1e5 ,
+                var[t, cycles[c]]) == 0)
     @info("Kirchhoff 3 passed")
 # --------------------------------------------------------------------------------------------------------
 

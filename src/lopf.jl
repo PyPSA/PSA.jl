@@ -6,13 +6,13 @@ include("auxilliaries.jl")
 
 function lopf(n, solver)
     # This function is organized as the following:
-    # 
+    #
     # 0.        Initialize model
     # 1. - 5.   add generators,  lines, links, storage_units,
     #           stores to the model:
     #               .1 separate different types from each other
     #               .2 define number of different types
-    #               .3 add variables to the model 
+    #               .3 add variables to the model
     #               .4 set contraints for extendables
     #               .5 set charging constraints (storage_units and stores)
     # 6.        set Kirchhoff's Current Law (nodal balance)
@@ -20,12 +20,12 @@ function lopf(n, solver)
     # 8.        set global constraints
     # 9.        objective function and solving
     # 10.       extract results
-    
-    # Conventions: 
-    #   - all variable names start with capital letters 
+
+    # Conventions:
+    #   - all variable names start with capital letters
     #   - Additional capital words are N (number of buses), T (number of snapshots)
     #       and N_* defining the nuber of considered variables added to the model.
-    
+
     #solver is e.g.
 
     #using Gurobi
@@ -113,49 +113,23 @@ function lopf(n, solver)
         Lb_com[t,gr] <= G_com[t=1:T,gr=1:N_com] <= Ub_com[t,gr]
     end
 
-    # 1.4 set constraints for generators
+    @variable m G_ext[gr=1:N_ext,t = 1:T]
 
-    Ub_ext = broadcast(*, p_max_pu[:,ext_gens_b], G_p_nom');
-    Lb_ext = broadcast(*, p_min_pu[:,ext_gens_b], G_p_nom');   
+    @variable m p_nom_min[gr] <=  gen_p_nom[gr=1:N_ext] <= p_nom_max[gr]
 
-    @constraints(m, begin
-        [t=1:T,gr=1:N_ext], G_ext[t,gr] >= Lb_ext[t,gr]
-        [t=1:T,gr=1:N_ext], G_ext[t,gr] <= Ub_ext[t,gr]
-
-        [t=1:T,gr=1:N_com], G_com[t,gr] - G_com[t,gr].*G_status[t,gr] == 0
-    end)
+    @constraints m begin
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] >= gen_p_nom[gr]*p_min_pu(t,gr)
+        [gr=1:N_ext,t=1:T], G_ext[gr,t] <= gen_p_nom[gr]*p_max_pu(t,gr)
+    end
 
 
-    G = [G_fix G_ext G_com] # G is the concatenated variable array
-    # sort generators the same way
-    generators = generators[[find(fix_gens_b) ; find(ext_gens_b); find(com_gens_b)],:] 
+    G = [G_fix; G_ext] # G is the concatenated variable array
+    generators = [generators[fix_gens_b,:]; generators[ext_gens_b,:] ] # sort generators the same
     # new booleans
     ext_gens_b = BitArray(generators[:, "p_nom_extendable"])
     com_gens_b = BitArray(generators[:, "commitable"])
     fix_gens_b = (ext_gens_b .| com_gens_b); fix_gens_b = .!fix_gens_b 
 
-# commitable still to work on:
-    # append_idx_col!(generators)
-    # g_up_time_b = generators[(com_gens_b .& generators[:min_up_time].>0), :idx]
-    # g_down_time_b = generators[(com_gens_b .& generators[:min_down_time].>0), :idx]
-
-    # @constraints(m, begin
-        # [gr=N_com,t=1], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_up_time]-1,T))
-        #                     >=
-        #                     # generators_com[gr,:min_up_time].*G_status[gr,t]
-        #                     generators_com[gr,:min_up_time].*generators_com[gr, :initial_status])
-        # [gr=N_com,t=2:T], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_up_time]-1,T))
-        #                     >= generators_com[gr,:min_up_time].*G_status[gr,t]
-        #                     - generators_com[gr,:min_up_time].*G_status[gr,t-1])
-        #
-        # [gr=N_com,t=1], (generators_com[gr,:min_down_time]
-        #                     - sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_down_time]-1,T))
-        #                     >= (- generators_com[gr,:min_down_time].*G_status[gr,t]
-        #                     + generators_com[gr,:min_down_time].*generators_com[gr, :initial_status]))
-        # [gr=N_com,t=2:T], (sum(G_status[gr,j] for j=t:min.(t+generators_com[gr,:min_down_time]-1,T))
-        #                     >= - generators_com[gr,:min_down_time].*G_status[gr,t]
-        #                     + generators_com[gr,:min_down_time].*G_status[gr,t-1])
-    # end)
 
     # free memory
     p_max_pu = 0; p_min_pu = 0

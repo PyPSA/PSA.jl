@@ -477,15 +477,11 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     # @variable(m, y, Bin)   # add binary variable
     # lines_used = LN .!= 0
     (branches, var, attribute) = (lines[fix_lines_b, :], LN_fix, "x_pu")
-    @show(size(branches))
-    @info("Kirchhoff 1 passed")
-    # Here is the problematic function
     cycles, dirs = get_directed_cycles(n, branches)
-    @info("Kirchhoff 2 passed")
-    @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
-            dot(dirs[c] .* float.(branches[cycles[c], attribute]) .* 1e5 ,
-                var[t, cycles[c]]) == 0)
-    @info("Kirchhoff 3 passed")
+    # @constraint(m, line_cycle_constraint[c=1:length(cycles), t=1:T] ,
+    #         dot(dirs[c] .* float.(branches[cycles[c], attribute]) .* 1e5 ,
+    #             var[t, cycles[c]]) == 0)
+    @info("Kirchhoff passed")
 # --------------------------------------------------------------------------------------------------------
 
 # 8. set global_constraints
@@ -541,7 +537,6 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
         extract_opt_result!(n, G_p_nom, :generators_t, "p_nom_opt", n.generators.axes[1].val[ext_gens_b])
         extract_opt_result!(n, G, :generators_t, "p", n.generators.axes[1].val)
         n.generators = reindex(n.generators, index = n.generators.axes[1].val)
-        @info("Passed")
 
         # lines
         orig_line_order = n.lines.axes[1].val
@@ -559,35 +554,20 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
         # storage_units
         orig_sus_order = n.storage_units.axes[1].val
-        n.storage_units = storage_units
         n.storage_units[fix_sus_b,"p_nom_opt"] = n.storage_units[fix_sus_b, "p_nom"]
         n.storage_units[ext_sus_b,"p_nom_opt"] = getvalue(SU_p_nom)
         extract_opt_result!(n, SU_spill, :storage_units_t, "spill", n.storage_units.axes[1].val)
-        data = AxisArray(getvalue(SU_dispatch .- SU_store), 
-                                                Axis{:row}(n.snapshots), 
-                                                Axis{:col}(n.storage_units.axes[1].val))
-        replace_attribute!(n, :storage_units_t, "p", data)
-        data = AxisArray(getvalue(SU_soc), Axis{:row}(n.snapshots), 
-                                           Axis{:col}(n.storage_units.axes[1].val))
-        replace_attribute!(n, :storage_units_t, "state_of_charge", data)
+        extract_opt_result!(n, (SU_dispatch .- SU_store), :storage_units_t, "p", n.storage_units.axes[1].val)
+        extract_opt_result!(n, SU_soc, :storage_units_t, "state_of_charge", n.storage_units.axes[1].val)
         n.storage_units = reindex(n.storage_units, index = orig_sus_order)
-        @info("Passed")
 
         # stores
         orig_stores_order = n.stores.axes[1].val
-        n.stores = stores
         n.stores[fix_stores_b,"e_nom_opt"] = n.stores[fix_stores_b, "e_nom"]
         n.stores[ext_stores_b,"e_nom_opt"] = getvalue(ST_e_nom)
-        data = AxisArray(getvalue(ST_spill), Axis{:row}(n.snapshots), 
-                                             Axis{:col}(n.stores.axes[1].val))
-        replace_attribute!(n, :stores_t, "spill", data)
-        data = AxisArray(getvalue(getvalue(ST_dispatch .- ST_store)), 
-                                                Axis{:row}(n.snapshots), 
-                                                Axis{:col}(n.stores.axes[1].val))
-        replace_attribute!(n, :stores_t, "e", data)                   
-        data = AxisArray(getvalue(ST_soc), Axis{:row}(n.snapshots), 
-                                           Axis{:col}(n.stores.axes[1].val))
-        replace_attribute!(n, :stores_t, "state_of_charge", data)
+        extract_opt_result!(n, ST_spill, :stores_t, "spill", n.stores.axes[1].val)
+        extract_opt_result!(n, (ST_dispatch .- ST_store), :stores_t, "e", n.stores.axes[1].val)                  
+        extract_opt_result!(n, ST_soc, :stores_t, "state_of_charge", n.stores.axes[1].val)
         n.stores = reindex(n.stores, index = orig_stores_order)
 
         

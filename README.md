@@ -30,7 +30,7 @@ What is not yet implemented, but coming soon:
 * Links with more than one output
 * Standing losses in storage
 * Some time-dependent efficiencies and max/min limits
-
+* Import/Export from/to NetCDF
 
 
 ## Required packages

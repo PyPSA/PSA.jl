@@ -536,40 +536,25 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
 
 # 11. extract optimisation results
     if status==:Optimal
+        order_components = get_comp_order(n)  # get the right index order
         # generators
-        orig_gen_order = n.generators.axes[1].val
-        n.generators = generators
-        data = AxisArray(getvalue(G_p_nom), Axis{:row}(n.snapshots), 
-                                            Axis{:col}(generators.axes[1].val[ext_gens_b]))
-        replace_attribute!(n, :generators_t, "p_nom_opt", data)
-        data = AxisArray(getvalue(G), Axis{:row}(n.snapshots), 
-                                      Axis{:col}(generators.axes[1].val))
-        replace_attribute!(n, :generators_t, "p", data)
-        n.generators = reindex(n.generators, index = orig_gen_order)
+        extract_opt_result!(n, G_p_nom, :generators_t, "p_nom_opt", n.generators.axes[1].val[ext_gens_b])
+        extract_opt_result!(n, G, :generators_t, "p", n.generators.axes[1].val)
+        n.generators = reindex(n.generators, index = n.generators.axes[1].val)
         @info("Passed")
 
         # lines
         orig_line_order = n.lines.axes[1].val
-        n.lines = lines
         n.lines[fix_lines_b,"s_nom_opt"] = n.lines[fix_lines_b, "s_nom"]
-        data = AxisArray(getvalue(LN), Axis{:row}(n.snapshots), 
-                                       Axis{:col}(n.lines.axes[1].val))
-        replace_attribute!(n, :lines_t, "p0", data)
-        data = AxisArray(getvalue(LN_s_nom), Axis{:row}(n.snapshots), 
-                                             Axis{:col}(n.lines.axes[1].val[ext_lines_b]))
-        replace_attribute!(n, :lines_t, "s_nom_opt", data)
+        extract_opt_result!(n, LN, :lines_t, "p0", n.lines.axes[1].val)
+        extract_opt_result!(n, LN_s_nom, :lines_t, "s_nom_opt", n.lines.axes[1].val[ext_lines_b])
         n.lines = reindex(n.lines, index = orig_line_order)
 
         # links
         orig_link_order = n.links.axes[1].val
-        n.links = links
         n.links[fix_links_b,"p_nom_opt"] = n.links[fix_links_b, "p_nom"]
-        data = AxisArray(getvalue(LK), Axis{:row}(n.snapshots), 
-                                       Axis{:col}(n.links.axes[1].val))
-        replace_attribute!(n, :links_t, "p0", data)
-        data = AxisArray(getvalue(LK_p_nom), Axis{:row}(n.snapshots), 
-                                             Axis{:col}(n.links.axes[1].val[ext_links_b]))
-        replace_attribute!(n, :links_t, "p_nom_opt", data)
+        extract_opt_result!(n, LK, :links_t, "p0", n.links.axes[1].val)
+        extract_opt_result!(n, LK_p_nom, :links_t, "p_nom_opt", n.links.axes[1].val[ext_links_b])
         n.links = reindex(n.links, index = orig_link_order)
 
         # storage_units
@@ -577,9 +562,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
         n.storage_units = storage_units
         n.storage_units[fix_sus_b,"p_nom_opt"] = n.storage_units[fix_sus_b, "p_nom"]
         n.storage_units[ext_sus_b,"p_nom_opt"] = getvalue(SU_p_nom)
-        data = AxisArray(getvalue(SU_spill), Axis{:row}(n.snapshots), 
-                                             Axis{:col}(n.storage_units.axes[1].val))
-        replace_attribute!(n, :storage_units_t, "spill", data)
+        extract_opt_result!(n, SU_spill, :storage_units_t, "spill", n.storage_units.axes[1].val)
         data = AxisArray(getvalue(SU_dispatch .- SU_store), 
                                                 Axis{:row}(n.snapshots), 
                                                 Axis{:col}(n.storage_units.axes[1].val))

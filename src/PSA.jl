@@ -116,7 +116,6 @@ function Network(
             :r_pu, :g_pu, :b_pu, :x_pu_eff, :r_pu_eff, :s_nom_opt, :mu_lower, :mu_upper])),
 
 # time_dependent
-<<<<<<< HEAD
     buses_t = (marginal_price = AxisArray([]), v_ang =  AxisArray([]),
             v_mag_pu_set = AxisArray([]), q =  AxisArray([]),
             v_mag_pu =  AxisArray([]), p =  AxisArray([]), 
@@ -147,42 +146,6 @@ function Network(
     transformers_t= (q1 =  AxisArray([]), q0 =  AxisArray([]), p0 =  AxisArray([]),
             p1 =  AxisArray([]), mu_upper =  AxisArray([]), mu_lower =  AxisArray([]),
             s_max_pu =  AxisArray([])),
-=======
-    buses_t=Dict{String,AxisArray}([("marginal_price",AxisArray([])), ("v_ang", AxisArray([])),
-            ("v_mag_pu_set",AxisArray([])), ("q", AxisArray([])),
-            ("v_mag_pu", AxisArray([])), ("p", AxisArray([])), ("p_max_pu", AxisArray([]))]),
-    generators_t=Dict{String,AxisArray}(
-            [("marginal_price",AxisArray([])), ("v_ang", AxisArray([])),
-            ("v_mag_pu_set",AxisArray([])), ("q", AxisArray([])),
-            ("v_mag_pu", AxisArray([])), ("p", AxisArray([])),
-            ("p_min_pu", AxisArray([])), ("p_max_pu", AxisArray([])),
-            ("p_nom_opt", AxisArray([]))
-            ]),
-    loads_t=Dict{String,AxisArray}([
-            ("q_set",AxisArray([])), ("p_set", AxisArray([])),
-            ("q", AxisArray([])), ("p", AxisArray([]))
-            ]),
-    lines_t=Dict{String,AxisArray}([("q0",AxisArray([])), ("q1", AxisArray([])),
-            ("p0",AxisArray([])), ("p1", AxisArray([])),
-            ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-            ("s_nom_opt", AxisArray([]))
-            ]),
-    links_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
-            ("p0",AxisArray([])), ("p1", AxisArray([])),
-            ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-            ("efficiency",AxisArray([])), ("p_set", AxisArray([]))
-            ,("p_nom_opt", AxisArray([]))]),
-
-    storage_units_t=Dict{String,AxisArray}([("p_min_pu",AxisArray([])), ("p_max_pu", AxisArray([])),
-        ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-        ("efficiency",AxisArray([])), ("p_set", AxisArray([])), ("max_hours", AxisArray([]))]),
-    stores_t=Dict{String,AxisArray}([("e_min_pu",AxisArray([])), ("e_max_pu", AxisArray([])),
-        ("inflow",AxisArray([])), ("mu_lower", AxisArray([])), ("mu_upper", AxisArray([])),
-        ("efficiency",AxisArray([])), ("e_set", AxisArray([]))]),
-    transformers_t= Dict{String,AxisArray}( [("q1", AxisArray([])), ("q0", AxisArray([])), ("p0", AxisArray([])),
-        ("p1", AxisArray([])), ("mu_upper", AxisArray([])), ("mu_lower", AxisArray([])),
-        ("s_max_pu", AxisArray([]))]),
->>>>>>> marginal changes
     snapshots=Array([]), 
     snapshot_weightings = AxisArray(Any[], Axis{:row}(String[])),
     name = "PSA network"

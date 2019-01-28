@@ -160,21 +160,14 @@ function calculate_dependent_values!(n)
     for comp in static_components(n)
         data = getfield(n, comp)
         if sum(ismissing.(data)) != 0 || sum(skipmissing(BitArray(data.==NaN))) != 0
-<<<<<<< HEAD
             @info("Component $comp has $(sum(ismissing.(data))) missing values")
         end
         size(data)[1] > 0 ? data[(.!ismissing.(data)) .& (data .== Inf)] = 1e7 : nothing
-=======
-            info("Component $comp has $(sum(ismissing.(data))) missing values")
-        end
-        size(data)[1] > 0? data[(.!ismissing.(data)) .& (data .== Inf)] = 1e7 : nothing
->>>>>>> marginal changes
     end
 
 end
 
 function scale_cost!(n, f_o="1")
-<<<<<<< HEAD
 """
 this function scales the costs by the factor f_0 to make the matrix range smaller in the lopf
     
@@ -189,24 +182,6 @@ this function scales the costs by the factor f_0 to make the matrix range smalle
         end
     end
 end
-=======
-"""""
-this function scales the costs by the factor f_0 to make the matrix range smaller in the lopf
-    
-"""""
-    cost = ["maintenance_cost", "capital_cost", "marginal_cost"]
-        for comp in static_components(n)
-            data = getfield(n, comp)
-            if size(data)[1] > 0 && comp != :snapshots && comp != :snapshot_weightings
-                for c in cost
-                    c in data.axes[2][:]? data[:, c] .= data[:,c]/float(f_o) : nothing
-                end
-            end
-        end
-end
-
-
->>>>>>> marginal changes
 
 
 
@@ -295,67 +270,13 @@ function aggregate_investments!(expr, start, var, t_ip, invest_at_first_sn)
     T = size(expr)[1]
     for t=2:T
         if t ∈ t_ip     
-<<<<<<< HEAD
             ip = findall(in(t),t_ip)[1] 
-=======
-            ip = findin(t_ip, t)[1] 
->>>>>>> marginal changes
             expr[t,:] = expr[t-1, :] + var[ip, :]
         else
             expr[t,:] = expr[t-1, :]
         end
     end
     @show(count(iszero, expr))
-<<<<<<< HEAD
-=======
-end
- # ------------------------------------------------------------------
-function get_unused_capacity(n, dict, comp, attribute1, attribute2)
-    (data_opt, data_flow) = (getfield(n, comp)[attribute1], getfield(n,comp)[attribute2])
-    data_flow = data_flow[data_opt.axes[2]]   # get just the extendables
-    num = count(sum(round.(data_opt),1) .== 0)
-    count(sum(round.(data_opt),1) .== 0) > 0? info("in $comp there are $num unused") : nothing
-    push!(dict, string(comp, "_unused") => (data_opt - abs.(data_flow)))
-end
-
-function get_summary(n)
-    summary = Dict()
-    #get unused capacities
-    get_unused_capacity(n, summary, :generators_t, "p_nom_opt", "p")
-    get_unused_capacity(n, summary, :lines_t, "s_nom_opt", "p0")
-    get_unused_capacity(n, summary, :links_t, "p_nom_opt", "p0")
-    
-    # get p_nom_opt after carrier
-    dict = Dict(n.generators.axes[1][i] => n.generators[i, "super_carrier"] 
-            for i = 1:(size(n.generators)[1]))
-    axes = unique(collect(n.generators[:, "super_carrier"]))
-    
-
-    attribute = ["p_nom_opt"]
-    for comp in attribute
-        list_carrier = fill(0.0, (length(n.snapshots), length(axes)))
-        sum = (AxisArray(list_carrier, Axis{:time}(n.snapshots), 
-                                    Axis{:col}(axes)))
-        for sn=1:length(n.snapshots)
-            t = n.generators_t[comp].axes[1][sn]
-            for g=1:(size(n.generators_t[comp])[2])
-                generator = n.generators_t[comp].axes[2][g]
-                value = n.generators_t[comp][t,g]
-                carrier = dict[generator]
-                sum[t, carrier] += value 
-            end
-        end
-        push!(summary, string(comp, "_carrier") => sum)
-    end
-    
-    # check if emergeny generators are needed
-    em_gen= n.generators[:, "super_carrier"] .== "emergency"
-    em_p_nom_opt = round.(n.generators_t["p_nom_opt"][1, em_gen])
-    indx = find(em_p_nom_opt .!= 0)
-    length(indx)>0? @show(n.generators[em_gen, :][indx, :], n.generators_t["p_nom_opt"][:, em_gen][:,indx]) : nothing
-
-    return summary
->>>>>>> marginal changes
 end
  # ------------------------------------------------------------------
 function get_unused_capacity(dict, comp, attribute1, attribute2)
@@ -405,8 +326,21 @@ end
 
 # -----------------------------------------------------------------------
 # TODO
-# function extract_opt_result(n, opt_data, comp, ext_col)
-#     data = AxisArray(getvalue(opt_data), Axis{:row}(n.snapshots), 
-#                                          Axis{:col}(n.comp.axes[1].val))
-                        
+function extract_opt_result!(n, opt_data, comp, attr, col)
+    data = AxisArray(getvalue(opt_data), Axis{:row}(n.snapshots), 
+                                         Axis{:col}(col))
+    replace_attribute!(n, comp, attr, data)
+end
+
+function get_comp_order(n)
+    order_comp = Dict()
+    for comp in static_components(n)[1:9]
+        push!(order_comp, string(comp) => getfield(n,comp).axes[1])
+    end
+    return order_comp     
+end
+
+# function set_comp_order(n, order_comp)
+#     for comp in static_components(n)[1:9]
+# end
 

@@ -14,7 +14,6 @@ end
 
 function to_simple_graph(n, branches=nothing)
     if branches == nothing
-        @show(branches)
         branches = cat(n.lines[:, ["bus0", "bus1"]],
                         n.links[:, ["bus0", "bus1"]], dims=1)
     end
@@ -128,7 +127,6 @@ function get_directed_cycles(n, branches=nothing)
                 bus0, bus1 = c[i_b], c[(i_b)%length(c) + 1]
                 
                 bus0, bus1 = rev_busidx[bus0], rev_busidx[bus1]
-                @show(bus0, bus1)
                 b, d = try_both_dirs((bus0, bus1))
 
                 push!(cyc_bra[i_c], b)

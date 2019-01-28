@@ -14,6 +14,20 @@ function to_graph(n)
     return g
 end
 
+function to_simple_graph(n, branches=nothing)
+    if branches == nothing
+        @show(branches)
+        branches = cat(n.lines[:, ["bus0", "bus1"]],
+                        n.links[:, ["bus0", "bus1"]], dims=1)
+    end
+    busidx = idx(n.buses)
+    g = SimpleGraph(size(n.buses)[1])
+    for b=1:size(branches)[1]
+        add_edge!(g, busidx[branches[b,"bus0"]], busidx[branches[b,"bus1"]] )
+    end
+    return g
+end
+
 function incidence_matrix(n)
     busidx = idx(n.buses)
     lines = n.lines
@@ -37,29 +51,38 @@ function ptdf_matrix(n)
 end
 
 
-#returns connected buses in for each cycle in network
-function get_cycles(n, branches=nothing)
+function get_cycles(n, branches = nothing)
     branches == nothing ?  branches = n.lines : nothing
-
-    busidx = idx(n.buses)
-    g = networkx[:Graph]()
-    g[:add_nodes_from](1:size(n.buses)[1])
-    g[:add_edges_from]([(busidx[branches[l,"bus0"]], busidx[branches[l,"bus1"]]) 
-                        for l=1:size(branches)[1]])
-    C = networkx[:cycle_basis](g)
-
-    #deal with multigraph:
-    busidx = idx(n.buses)
-    line_buses = sort(string.(n.lines[:, ["bus0", "bus1"]]), dims=2)
-    sorted_pairs = zip(line_buses[:, 1], line_buses[:, 2]) |> collect
-    for p in unique(sorted_pairs)
-        lines_i = findall((in)([p]), sorted_pairs)
-        if length(lines_i)>1
-            push!(C, [busidx[p[1]], busidx[p[2]]])
-        end
-    end
-    C
+    LightGraphs.cycle_basis(to_simple_graph(n, branches))
 end
+
+
+# #returns connected buses in for each cycle in network
+# function get_cycles(n, branches=nothing)
+#     branches == nothing ?  branches = n.lines : nothing
+
+#     busidx = idx(n.buses)
+#     g = networkx[:Graph]()
+#     g[:add_nodes_from](1:size(n.buses)[1])
+#     g[:add_edges_from]([(busidx[branches[l,"bus0"]], busidx[branches[l,"bus1"]]) 
+#                         for l=1:size(branches)[1]])
+#     C = networkx[:cycle_basis](g)
+
+#     #deal with multigraph:
+#     busidx = idx(n.buses)
+#     line_buses = sort(string.(n.lines[:, ["bus0", "bus1"]]), dims=2)
+#     sorted_pairs = zip(line_buses[:, 1], line_buses[:, 2]) |> collect
+#     for p in unique(sorted_pairs)
+#         lines_i = findall((in)([p]), sorted_pairs)
+#         if length(lines_i)>1
+#             push!(C, [busidx[p[1]], busidx[p[2]]])
+#         end
+#     end
+#     C
+# end
+
+
+
 
 #returns connected lines and their direction for each cycle
 function get_directed_cycles(n, branches=nothing)
@@ -107,7 +130,7 @@ function get_directed_cycles(n, branches=nothing)
                 bus0, bus1 = c[i_b], c[(i_b)%length(c) + 1]
                 
                 bus0, bus1 = rev_busidx[bus0], rev_busidx[bus1]
-
+                @show(bus0, bus1)
                 b, d = try_both_dirs((bus0, bus1))
 
                 push!(cyc_bra[i_c], b)

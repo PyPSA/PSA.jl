@@ -1,6 +1,4 @@
 using LightGraphs
-using PyCall
-networkx = pyimport("networkx" )
 
 function to_graph(n)
     busidx = idx(n.buses)

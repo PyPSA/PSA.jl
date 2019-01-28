@@ -71,7 +71,7 @@ function lopf_pathway(n, solver; extra_functionality=nothing,
     p_max_pu = get_switchable_as_dense(n, "generators", "p_max_pu") # matrix snapshot x generator["p_max_pu"]
     p_min_pu = get_switchable_as_dense(n, "generators", "p_min_pu")
 
-    @test all(broadcast(<, p_min_pu, p_max_pu)) == true
+    @test all(broadcast(<=, p_min_pu, p_max_pu)) == true
 
     p_nom = float.(n.generators[:, "p_nom"]) # Array{Any,1} formatted to Array{Float64,1}
 

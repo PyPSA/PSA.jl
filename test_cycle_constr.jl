@@ -5,7 +5,6 @@ using PSA, JuMP, Gurobi, AxisArrays, Revise
 #include("/home/lisa/vres/jl/PSA.jl/src/auxilliaries.jl")
 
 nname = "elmod_3h"
-f_o = "1e3"
 n = PSA.import_nc("/home/vres/data/pypsa_models/elmod/$(nname).nc")
 PSA.calculate_dependent_values!(n)
 PSA.set_snapshots!(n, n.snapshots[1:10])
@@ -16,5 +15,4 @@ PSA.set_snapshots!(n, n.snapshots[1:10])
 # n.generators[:, "p_nom_opt"] .= 0
 
 solver = GurobiSolver(Crossover=1)
-m = PSA.lopf_pathway(n, solver, investment_period=n.snapshots, 
-                     invest_at_first_sn=true)
+m = PSA.lopf_pathway(n, solver, investment_period=n.snapshots, invest_at_first_sn=true)

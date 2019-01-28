@@ -248,7 +248,7 @@ function export_nc(n, path)
                 sn.attrib["units"] = "hours since $(data[1])"
                 sn.attrib["calendar"] = "gregorian"
                 sn[:] = 1:length(data)
-            elseif comp == "snapshots_weightings"
+            elseif comp == "snapshot_weightings"
                 continue
             else
                 # Dimension

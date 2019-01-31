@@ -43,9 +43,10 @@ function run_iterative_lopf(network, solver, iterations;
         end
     end
 
-
+    k=1
+    diff = 1e11
     # solve
-    for k=1:iterations
+    while k<iterations && diff > 1
 
         println("Run iteration $k")
 
@@ -66,6 +67,7 @@ function run_iterative_lopf(network, solver, iterations;
                 )
         end
 
+        k!=1 ? diff = abs(objectives[end]-m.objVal) : diff = 1e11
 
         push!(objectives, m.objVal)
         push!(capacities, network.lines[:s_nom_opt])
@@ -93,6 +95,8 @@ function run_iterative_lopf(network, solver, iterations;
                 end
             end
         end
+
+        k+=1
 
     end
 

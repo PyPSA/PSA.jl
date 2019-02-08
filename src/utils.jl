@@ -681,11 +681,16 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     ST_soc = [hcat(getindex.(sm, :ST_soc_fix)...); hcat(getindex.(sm, :ST_soc_ext)...)]
     ST_spill = [hcat(getindex.(sm, :ST_spill_fix)...); hcat(getindex.(sm, :ST_spill_ext)...)]
 
-    capex_gep_cost = dot(generators[ext_gens_b,:capital_cost], getvalue(m[:G_p_nom]))
-    + dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
+    capex_gep_cost = dot(generators[ext_gens_b,:capital_cost], getvalue(m[:G_p_nom])) + 
+    dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
-    capex_tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom])) 
-    + dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]) 
+    capex_tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom])) +
+    dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]) 
+
+    capex_hvdc_cost = dot(links[ext_links_b,:capital_cost], getvalue(m[:LK_p_nom])) +
+    dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom]) 
+
+    capex_cost = capex_gep_cost + capex_tep_cost + capex_hvdc_cost
 
     lines = [lines[fix_lines_b,:]; lines[ext_lines_b,:]]
     orig_gen_order = network.generators[:name]
@@ -741,18 +746,30 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
 
     align_component_order!(network)
 
+    total_gen = sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
+
     # print total system code
-    println("\nObjective:\t$(m.objVal)")
+    println("\nObjective:\t$(m.objVal/1e9) Billion Euro")
+    println("CAPEX cost:\t$(capex_cost/1e9) Billion Euro")
+    println("OPEX cost:\t$(opex_cost/1e9) Billion Euro")
+    println("LCOE avg:\t$(m.objVal/total_gen) Euro / MWh")
     println("TEP share:\t$(tep_cost/m.objVal*100) %")
 
     generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
     carrier_index(carrier) = findin(generators[:carrier], carrier)
 
+    # carbon emissions
+    co2, = sum(sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
+                                getvalue(G[carrier_index(nonnull_carriers),t])) for t=1:T)
+                                * select_names(network.carriers, [carrier])[:co2_emissions]
+                                for carrier in network.carriers[:name])
+
+    println("CO2 emission:\t$(co2/1e6) Mt")
+
     # renewable energy target
     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
-    res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / 
-    sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
+    res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / total_gen
 
     println("RES share:\t$(res*100) %")
 

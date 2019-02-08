@@ -212,6 +212,13 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
     catch
         println("No link geometry to delete!")
     end
+    network.links[:p_nom_extendable] = true
+    network.links[:p_nom_max] = 8000
+
+    # TODO: temporary limit p_nom_max=Inf to 100000
+    ext_gens_b = network.generators[:p_nom_extendable]
+    inf_gens_b = network.generators[:p_nom_max] .== Inf
+    network.generators[ext_gens_b .& inf_gens_b, :p_nom_max] = 5e4
 
     return network
 

@@ -4,13 +4,6 @@ using DataFrames, CSV, LightGraphs, Gurobi
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
-include("build_lopf.jl")
-include("build_block_lopf.jl")
-include("run_lopf.jl")
-include("run_iterative_lopf.jl")
-include("run_benders_lopf.jl")
-include("run_lazybenders_lopf.jl")
-
 mutable struct network_mutable
     buses::DataFrame
     generators::DataFrame
@@ -33,7 +26,13 @@ mutable struct network_mutable
     snapshots::DataFrame
 end
 
-
+include("build_lopf.jl")
+include("build_block_lopf.jl")
+include("run_lopf.jl")
+include("run_iterative_lopf.jl")
+include("run_benders_lopf.jl")
+include("run_lazybenders_lopf.jl")
+include("interface.jl")
 
 function Network(
 # static
@@ -213,7 +212,7 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
         println("No link geometry to delete!")
     end
     network.links[:p_nom_extendable] = true
-    network.links[:p_nom_max] = 8000
+    network.links[:p_nom_max] = 8000.0
 
     # TODO: temporary limit p_nom_max=Inf to 100000
     ext_gens_b = network.generators[:p_nom_extendable]

@@ -1,14 +1,16 @@
 using JuMP
 using MathProgBase
+using PowerModels
+pm = PowerModels
 
 """Solves a linear optimal power flow"""
 function run_lopf(network, solver; 
     rescaling::Bool=false,
-    formulation::String="angles_linear",
+    formulation="angles_linear",#::Union{String, Type{GenericPowerModel{F}}}="angles_linear",
     investment_type::String="continuous",
     blockmodel::Bool=false,
     decomposition::String="",
-    n_sub::Int64=1)
+    n_sub::Int64=1) #where F <: pm.AbstractPowerFormulation
 
     if blockmodel
         println("Build block JuMP model.")

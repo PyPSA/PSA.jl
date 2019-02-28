@@ -272,7 +272,6 @@ function get_cycles(network)
 end
 
 
-# TODO: not used
 # following lift-and-project relaxation of Taylor2015a
 function get_shortest_line_paths(network)
     busidx = idx(network.buses)
@@ -774,18 +773,21 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     println("RES share:\t$(res*100) %")
 
     # curtailment
-    sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)
-    p_nom_opt = generators[:p_nom_opt][findin(generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))]
-    ren_gens_i = findin(network.generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))
-    ren_gens_b = [in(i,ren_gens_i) ? true : false for i=1:size(network.generators)[1]]
-    fix_ren_gens_b = .!network.generators[:p_nom_extendable][ren_gens_b]
-    p_max_pu = network.generators_t["p_max_pu"][:,2:end]
-    p_max_pu = [p_max_pu[:,fix_ren_gens_b] p_max_pu[:,.!fix_ren_gens_b]]
-    p_max_pu = convert(Array,p_max_pu)
-    sum_of_p_max_pu = sum(network.snapshots[:weightings][t]*p_max_pu[t,:] for t=1:T)
-    curtailment = 1 - ( sum(sum_of_dispatch) / dot(p_nom_opt,sum_of_p_max_pu) )
+    # sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)
+    # p_nom_opt = generators[:p_nom_opt][findin(generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))]
+    # ren_gens_i = findin(network.generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))
+    # ren_gens_b = [in(i,ren_gens_i) ? true : false for i=1:size(network.generators)[1]]
+    # fix_ren_gens_b = .!network.generators[:p_nom_extendable][ren_gens_b]
+    # p_max_pu = network.generators_t["p_max_pu"][:,2:end]
+    # p_max_pu = [p_max_pu[:,fix_ren_gens_b] p_max_pu[:,.!fix_ren_gens_b]]
+    # p_max_pu = convert(Array,p_max_pu)
+    # sum_of_p_max_pu = sum(network.snapshots[:weightings][t]*p_max_pu[t,:] for t=1:T)
+    # println(p_nom_opt.*sum_of_p_max_pu)
+    # println(sum_of_dispatch)
+    # println(sum_of_dispatch ./ (p_nom_opt.*sum_of_p_max_pu))
+    # curtailment = 1 - ( sum(sum_of_dispatch) / dot(p_nom_opt,sum_of_p_max_pu) )
 
-    println("Curtailment:\t$(curtailment*100) %")
+    #println("Curtailment:\t$(curtailment*100) %")
 
     println("")
 

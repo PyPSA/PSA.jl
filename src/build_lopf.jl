@@ -1,30 +1,43 @@
 using JuMP
 using MathProgBase
+using PowerModels
+pm = PowerModels
 
 include("utils.jl")
 
 """Build a linear optimal power flow model"""
-function build_lopf(network, solver; rescaling::Bool=false,formulation::String="angles_linear",
+function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_linear",#::Union{String, Type{GenericPowerModel{F}}}="angles_linear",
                     investment_type::String="continuous",
-                    blockmodel::Bool=false, benders::String="", snapshot_number=0, N_cuts=1, blockstructure::Bool=false)
+                    blockmodel::Bool=false, benders::String="", snapshot_number=0, N_cuts=1, blockstructure::Bool=false) #where F <: pm.AbstractPowerFormulation
 
-    # This function is organized as the following:
-    #
-    # 0.        Initialize model and add all variables
-    # 1. - 5.   add generators,  lines, links, storage_units,
-    #           stores to the model:
+    # ---------------- #               
+    # Function Outline #
+    # ---------------- #
+
+    # 1.        Initialize model and auxiliaries
+    # 2.        Get base model from PowerModels.jl
+    # 3.        Add all variables
+    # 4. - 10.  Add generators,  lines, links, storage_units, shunts, stores to the model:
     #               .1 separate different types from each other
     #               .2 define number of different types
     #               .3 add variables to the model
     #               .4 set contraints for extendables
     #               .5 set charging constraints (storage_units and stores)
-    # 6.        give power flow formulation
-    # 7.        set global constraints
-    # 8.        give objective function
+    # 11.       give power flow formulation
+    # 12.       set global constraints
+    # 13.       give objective function
     
-    # Conventions:
+    # ------------ #
+    # Conventions: #
+    # ------------ #
+    
     #   - all variable names start with capital letters
     
+
+# --------------------------------------------------------------------------------------------------------
+# 1. Initialize model and auxiliaries
+# --------------------------------------------------------------------------------------------------------
+
     # sanity checks
     snapshot_number>0 && benders!="slave" ? error("Can only specify one single snapshot for slave-subproblem!") : nothing
     blockmodel && benders!="" ? error("Can either do manual benders decomposition or use BlockDecomposition.jl!") : nothing
@@ -39,6 +52,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     T = nrow(network.snapshots) #normally snapshots
     nrow(network.loads_t["p"])!=T ? network.loads_t["p"]=network.loads_t["p_set"] : nothing
     candidates = line_extensions_candidates(network)
+
+    has_reactive_power = !(formulation isa String) && !(formulation <: Union{DCPPowerModel, NFAPowerModel})
 
     # shortcuts
     buses = network.buses
@@ -69,7 +84,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     N_ext_ST = sum(.!(.!stores[:e_nom_extendable]))
     N_ST = N_fix_ST + N_ext_ST
     
-    # TODO: adapt if not all lines are extendable
     if N_fix_LN > 0 && investment_type!="continuous"
         error("Currently all lines have to be extendable for investment type $investment_type!")
     end
@@ -93,13 +107,32 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
     end
 
 # --------------------------------------------------------------------------------------------------------
+# 2: get base power model from PowerModels
+# --------------------------------------------------------------------------------------------------------
 
-# 0. add all variables to the Model
+    if formulation <: GenericPowerModel
+        
+        if formulation <: GenericPowerModel{T} where T <: pm.AbstractBFForm
+            post = post_mn_flow_bf
+        else
+            post = post_mn_flow
+        end
+        
+        network_pm = convert_network(network)
+        powermodel = build_generic_model(network_pm, formulation, post, multinetwork=true, jump_model=m)
+
+    end
+
+# --------------------------------------------------------------------------------------------------------
+# 3. add all variables to the Model
+# --------------------------------------------------------------------------------------------------------
+
+    println("Add variables")
 
     if benders != "slave"
 
         @variable(m, G_p_nom[gr=1:N_ext_G])
-        @variable(m, LN_s_nom[l=1:N_ext_LN])
+        @variable(m, LN_s_nom[l=1:N_ext_LN] >= 0) # for conic constraint
         @variable(m, LK_p_nom[l=1:N_ext_LK])
         
         if investment_type == "continuous"
@@ -125,14 +158,6 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         @variable(m, G_fix[gr=1:N_fix_G,t=1:T_params_length])
         @variable(m, G_ext[gr=1:N_ext_G,t=1:T_params_length])
         G = [G_fix; G_ext] # G is the concatenated variable array
-        
-        @variable(m, LN_fix[l=1:N_fix_LN,t=1:T_params_length])
-        @variable(m, LN_ext[l=1:N_ext_LN,t=1:T_params_length])
-        LN = [LN_fix; LN_ext]
-        
-        @variable(m, LK_fix[l=1:N_fix_LK,t=1:T_params_length])
-        @variable(m, LK_ext[l=1:N_ext_LK,t=1:T_params_length])
-        LK = [LK_fix; LK_ext]
         
         @variable(m, SU_dispatch_fix[s=1:N_fix_SU,t=1:T_params_length])
         @variable(m, SU_dispatch_ext[s=1:N_ext_SU,t=1:T_params_length])
@@ -166,7 +191,48 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         @variable(m, ST_spill_ext[l=1:N_ext_ST,t=1:T_params_length])
         ST_spill = [ST_spill_fix, ST_spill_ext]
         
-        contains(formulation, "angles") ? @variable(m, THETA[1:N,1:T_params_length]) : nothing
+        @variable(m, LK_fix[l=1:N_fix_LK,t=1:T_params_length])
+        @variable(m, LK_ext[l=1:N_ext_LK,t=1:T_params_length])
+        LK = [LK_fix; LK_ext]
+        
+        if formulation <: GenericPowerModel
+            LN_fix = get_LN(network, powermodel, :p, ext=false)
+            LN_ext = get_LN(network, powermodel, :p, ext=true)
+        else
+            contains(formulation, "angles") ? @variable(m, THETA[1:N,1:T_params_length]) : nothing
+            @variable(m, LN_fix[l=1:N_fix_LN,t=1:T_params_length])
+            @variable(m, LN_ext[l=1:N_ext_LN,t=1:T_params_length])
+        end
+        LN = [LN_fix; LN_ext]
+
+        if has_reactive_power
+
+            # TODO: review if all necessary (potentially merge store/dispatch)
+            @variable(m, G_Q_fix[gr=1:N_fix_G,t=1:T_params_length])
+            @variable(m, G_Q_ext[gr=1:N_ext_G,t=1:T_params_length])
+            G_Q = [G_Q_fix; G_Q_ext]
+            
+            @variable(m, SU_Q_dispatch_fix[s=1:N_fix_SU,t=1:T_params_length])
+            @variable(m, SU_Q_dispatch_ext[s=1:N_ext_SU,t=1:T_params_length])
+            SU_Q_dispatch = [SU_Q_dispatch_fix; SU_Q_dispatch_ext]
+            
+            @variable(m, SU_Q_store_fix[s=1:N_fix_SU,t=1:T_params_length])
+            @variable(m, SU_Q_store_ext[s=1:N_ext_SU,t=1:T_params_length])
+            SU_Q_store = [SU_Q_store_fix; SU_Q_store_ext]
+
+            @variable(m, ST_Q_dispatch_fix[s=1:N_fix_ST,t=1:T_params_length])
+            @variable(m, ST_Q_dispatch_ext[s=1:N_ext_ST,t=1:T_params_length])
+            ST_Q_dispatch = [ST_Q_dispatch_fix; ST_Q_dispatch_ext]
+            
+            @variable(m, ST_Q_store_fix[s=1:N_fix_ST,t=1:T_params_length])
+            @variable(m, ST_Q_store_ext[s=1:N_ext_ST,t=1:T_params_length])
+            ST_Q_store = [ST_Q_store_fix; ST_Q_store_ext]
+
+            LN_Q_fix = get_LN(network, powermodel, :q, ext=false)
+            LN_Q_ext = get_LN(network, powermodel, :q, ext=true)
+            LN_Q = [LN_Q_fix; LN_Q_ext]
+
+        end
 
     end
 
@@ -195,7 +261,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
 
         println("Start building model for snapshot(s) $T_params_curr.")
 
-    # 1. add all generators to the model
+# --------------------------------------------------------------------------------------------------------
+# 4. add all generators to the model
+# --------------------------------------------------------------------------------------------------------
+        
+        println("Add generators")
 
         # set different generator types
         generators = network.generators
@@ -214,7 +284,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         p_nom = network.generators[fix_gens_b,:p_nom]
 
         rf = rf_dict[:bounds_G]
-        
+
         if benders != "master"
             if blockstructure || sn > 0
                 @constraints(m, begin 
@@ -302,9 +372,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         ext_gens_b = convert(BitArray, generators[:p_nom_extendable])
         com_gens_b = convert(BitArray, generators[:commitable])
 
-    # --------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------
+# 5. add all lines to the model
+# --------------------------------------------------------------------------------------------------------
 
-    # 2. add all lines to the model
+        println("Add lines")
 
         # set different lines types
         lines = network.lines
@@ -446,9 +518,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         fix_lines_b = (.!lines[:s_nom_extendable])
         ext_lines_b = .!fix_lines_b
 
-    # --------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------
+# 6. add all links to the model
+# --------------------------------------------------------------------------------------------------------
 
-    # 3. add all links to the model
+    println("Add links")
 
         rf = rf_dict[:bounds_LK]
 
@@ -539,11 +613,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         fix_links_b = .!links[:p_nom_extendable]
         ext_links_b = .!fix_links_b
 
-    # --------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------
+# 7. define storage_units
+# --------------------------------------------------------------------------------------------------------
 
-    # TODO: not implemented for benders and individual snapshots yet!
-
-    # 4. define storage_units
+# WARNING; not implemented for benders and individual snapshots!
 
         # set different storage_units types
         storage_units = network.storage_units
@@ -677,9 +751,9 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             end)
         end
 
-    # --------------------------------------------------------------------------------------------------------
-
-    # 5. define stores
+# --------------------------------------------------------------------------------------------------------
+# 8. define stores
+# --------------------------------------------------------------------------------------------------------
 
         # set different stores types
         stores = network.stores
@@ -828,15 +902,117 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
             end)
         end
 
-    # --------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------
+# 9. add shunt impedances
+# --------------------------------------------------------------------------------------------------------
 
-    # 6. power flow formulations
+# --------------------------------------------------------------------------------------------------------
+# 10. power flow formulations
+# --------------------------------------------------------------------------------------------------------
+
+        println("Add flow constraints")
 
         rf = rf_dict[:flows]
 
-        if benders != "master"
+        if benders != "master" 
+            
+            if formulation <: GenericPowerModel
 
-            if formulation == "angles_linear"
+                # load data in correct order
+                loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
+
+                # TODO: add KCL and manual specifics to base model from powermodels
+                # TODO: add shunts
+               
+                @constraint(m, nodal_p[t=T_vars_curr,n=1:N],
+    
+                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    
+                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+    
+                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                    )
+
+
+                if has_reactive_power
+                    @constraint(m, nodal_q[t=T_vars_curr,n=1:N],
+        
+                            sum(G_Q[findin(generators[:bus], [reverse_busidx[n]]), t])
+                            + sum(SU_Q_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                            #- row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                            - sum(SU_Q_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                            == sum(LN_Q[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                            - sum(LN_Q[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                    )
+                end
+
+                gpm = powermodel
+
+                # add cm upper bounds dependant on line capacity
+                # careful: this makes formulation non-convex -> Q matrix is not positive semi-definite!
+                if formulation <: Union{QCWRPowerModel, QCWRTriPowerModel}
+
+                    acc = pm.ref(gpm, 1, :bus)
+                    
+                    @constraint(gpm.model,
+                        ub_cm_ext[l=1:N_ext_LN,t=T_vars_curr],
+                        pm.var(gpm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= 
+                        (lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
+                    ) # TODO: access vminpu from PSA once default set
+
+                    @constraint(gpm.model,
+                        ub_cm_fix[l=1:N_fix_LN,t=T_vars_curr],
+                        pm.var(gpm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= 
+                        (lines[fix_lines_b,:s_max_pu][l] * lines[fix_lines_b,:s_nom][l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
+                    ) # TODO: access vminpu from PSA once default set
+
+                elseif formulation <: Union{SOCBFPowerModel, SOCBFConicPowerModel}
+
+                    acc = pm.ref(gpm, 1, :bus)
+                    
+                    @constraint(gpm.model,
+                        ub_cm_ext[l=1:N_ext_LN,t=T_vars_curr],
+                        pm.var(gpm, t, 1,:cm)[lineidx[lines[l,:name]]] <= 
+                        (lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
+                    ) # TODO: access vminpu from PSA once default set
+                    
+                    @constraint(gpm.model,
+                        ub_cm_fix[l=1:N_fix_LN,t=T_vars_curr],
+                        pm.var(gpm, t, 1,:cm)[lineidx[lines[l,:name]]] <= 
+                        (lines[fix_lines_b,:s_max_pu][l] * lines[fix_lines_b,:s_nom][l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
+                    ) # TODO: access vminpu from PSA once default set
+
+                end
+
+                if formulation <: Union{SOCWRPowerModel, SOCWRConicPowerModel, SOCBFPowerModel, SOCBFConicPowerModel, SDPWRMPowerModel, SparseSDPWRMPowerModel, QCWRPowerModel, QCWRTriPowerModel}
+                    
+                    ids_ext = map(x -> reverse_lineidx[x], lines[lines[:s_nom_extendable],:][:name])
+                    ids_fix = map(x -> reverse_lineidx[x], lines[.!lines[:s_nom_extendable],:][:name])
+                    
+                    for (n, netw) in nws(gpm)
+                        for i in ids_fix
+                            pm.constraint_thermal_limit_from(gpm, i, nw=n)
+                            pm.constraint_thermal_limit_to(gpm, i, nw=n)
+                        end
+                        l = 1
+                        for i in ids_ext
+                            constraint_thermal_limit_from_ext(gpm, i, LN_s_nom[l], nw=n)
+                            constraint_thermal_limit_to_ext(gpm, i, LN_s_nom[l], nw=n)
+                            l+=1
+                        end
+                    end
+                end
+                
+
+            elseif formulation == "angles_linear"
 
                 # load data in correct order
                 loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
@@ -1239,9 +1415,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         end
     
 
-    # --------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------
+# 11. set global_constraints
+# --------------------------------------------------------------------------------------------------------
 
-    # 7. set global_constraints
+        println("Add global constraints")
 
         # carbon constraint
         ## carbon emissions <= emission limit
@@ -1352,9 +1530,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation::String="
         end
         
 
-    # --------------------------------------------------------------------------------------------------------
-
-    # 8. set objective function
+# --------------------------------------------------------------------------------------------------------
+# 12. set objective function
+# --------------------------------------------------------------------------------------------------------
+    
+        println("Add objective")
 
         if t_vars_curr==T_params_length
 

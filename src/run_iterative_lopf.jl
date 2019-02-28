@@ -1,7 +1,7 @@
 """Solves an iterative linear optimal power flow"""
 function run_iterative_lopf(network, solver, iterations; 
     rescaling::Bool=false,
-    formulation::String="angles_linear",
+    formulation="angles_linear",#::Union{String, Type{GenericPowerModel{F}}}="angles_linear",
     investment_type::String="continuous",
     post_discretization::Bool=false,
     seq_discretization::Bool=false,
@@ -9,7 +9,7 @@ function run_iterative_lopf(network, solver, iterations;
     discretization_thresholds::Array{Float64,1}=[0.2,0.3],
     blockmodel=false,
     decomposition=""
-    )
+    ) #where F <: pm.AbstractPowerFormulation
 
     # precalculations and initialisation
     x_0 = deepcopy(network.lines[:x])

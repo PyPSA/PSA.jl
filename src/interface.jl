@@ -248,6 +248,11 @@ end
 
 # converts PowerModel way of accessing variables to PSA way
 function get_LN(network::PSA.network_mutable, powermodel::GenericPowerModel, variable::Symbol; reverse::Bool=false, ext::Bool=true)
+
+    if typeof(powermodel) <: Union{DCPPowerModel, NFAPowerModel} && ( variable != :p || reverse )
+        return Array{JuMP.Variable,2}
+    end
+
     ln = network.lines
     T = nrow(network.snapshots)
     L = nrow(ln)

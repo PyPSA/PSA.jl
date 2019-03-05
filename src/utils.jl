@@ -637,6 +637,15 @@ function filter_timedependent_extremes!(z, threshold::Float64)
 end
 
 
+"""Derive linear equation from two points"""
+get_slope(x1::Float64,y1::Float64,x2::Float64,y2::Float64) = (y2-y1) / (x2-x1)
+get_intercept(x1::Float64,y1::Float64,x2::Float64,y2::Float64) = (x2*y1-x1*y2) / (x2-x1)
+get_intercept(p1::Tuple, p2::Tuple) = get_intercept(p1[1],p1[2],p2[1],p2[2])
+get_slope(p1::Tuple, p2::Tuple) = get_slope(p1[1],p1[2],p2[1],p2[2])
+
+"""Derive slope of power factor line"""
+pf_slope(pf::Float64) = tan(acos(pf))
+
 """Organises optimisation output"""
 function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=true)
 

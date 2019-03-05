@@ -86,7 +86,7 @@ function get_component(network::PSA.network_mutable, comp::Symbol)
             "b_fr" => :b_pu,
             "b_to" => :b_pu,
             "f_bus" => :bus0,
-            "br_status" => nothing,# needs a default
+            "br_status" => nothing, # needs a default
             "t_bus" => :bus1,
             "index" => :name,
             "angmin" => :v_ang_min,

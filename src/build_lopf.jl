@@ -112,11 +112,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
     if formulation <: GenericPowerModel
         
-        # TODO: unsure, but might be necessary for DC approximation
-        if formulation <: GenericPowerModel{T} where T <: pm.AbstractActivePowerFormulation
-            lines[:r] .= 0.0
-            lines[:r_pu] .= 0.0
-        end
+        # TODO: unsure, but might be necessary for DC approximation, why does it make such a big difference?
+        # if formulation <: GenericPowerModel{T} where T <: pm.AbstractActivePowerFormulation
+        #    lines[:r] .= 0.0
+        #    lines[:r_pu] .= 0.0
+        # end
         
         if formulation <: GenericPowerModel{T} where T <: pm.AbstractBFForm
             post = post_mn_flow_bf

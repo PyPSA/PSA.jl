@@ -110,8 +110,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 # 2: get base power model from PowerModels
 # --------------------------------------------------------------------------------------------------------
 
-    if formulation <: GenericPowerModel
-        
+    if typeof(formulation) != String
+ 
         # TODO: unsure, but might be necessary for DC approximation, why does it make such a big difference?
         # if formulation <: GenericPowerModel{T} where T <: pm.AbstractActivePowerFormulation
         #    lines[:r] .= 0.0
@@ -201,7 +201,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
         @variable(m, LK_ext[l=1:N_ext_LK,t=1:T_params_length])
         LK = [LK_fix; LK_ext]
         
-        if formulation <: GenericPowerModel
+        if typeof(formulation) != String
             LN_fix = get_LN(network, powermodel, :p, ext=false)
             LN_ext = get_LN(network, powermodel, :p, ext=true)
         else
@@ -932,7 +932,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
         if benders != "master" 
             
-            if formulation <: GenericPowerModel
+            if typeof(formulation) != String
 
                 # load data in correct order
                 loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
@@ -972,8 +972,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                 gpm = powermodel
 
                 # add cm upper bounds dependant on line capacity
-                # careful: this makes formulation non-convex -> Q matrix is not positive semi-definite!
-                if formulation <: Union{QCWRPowerModel, QCWRTriPowerModel}
+
+                if typeof(formulation) != String && formulation <: Union{SOCBFPowerModel, SOCBFConicPowerModel, QCWRPowerModel, QCWRTriPowerModel}
 
                     acc = pm.ref(gpm, 1, :bus)
                     

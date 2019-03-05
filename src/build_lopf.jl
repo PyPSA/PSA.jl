@@ -1006,12 +1006,41 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                 if typeof(formulation) != String && formulation <: Union{SOCBFPowerModel, SOCBFConicPowerModel, QCWRPowerModel, QCWRTriPowerModel}
 
                     acc = pm.ref(gpm, 1, :bus)
+
+                    # TODO: add option in function parameters
+                    convex_relaxation = true
+
+                    ub_ext = Array{Any}(N_ext_LN)
+
+                    if convex_relaxation
+                        for l=1:N_ext_LN
+
+                            point_at_lim(x) = ( x, (lines[ext_lines_b,:s_max_pu][l] * x / acc[busidx[lines[l,:bus0]]]["vmin"])^2) 
+                            # TODO: access vminpu from PSA once default set
+
+                            min_point = point_at_lim(lines[ext_lines_b,:s_nom_min][l])
+                            max_point = point_at_lim(lines[ext_lines_b,:s_nom_max][l])
+
+                            slope = get_slope(min_point, max_point)
+                            intercept = get_intercept(min_point, max_point)
+
+                            ub_ext[l] = slope * LN_s_nom[l] + intercept
+
+                        end
+                    else
+                        for l=1:N_ext_LN
+                            ub_ext[l] = (lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
+                        end
+                    end
+
+                end
+
+                if typeof(formulation) != String && formulation <: Union{QCWRPowerModel, QCWRTriPowerModel}
                     
                     @constraint(gpm.model,
                         ub_cm_ext[l=1:N_ext_LN,t=T_vars_curr],
-                        pm.var(gpm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= 
-                        (lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
-                    ) # TODO: access vminpu from PSA once default set
+                        pm.var(gpm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= ub_ext[l]
+                    ) 
 
                     @constraint(gpm.model,
                         ub_cm_fix[l=1:N_fix_LN,t=T_vars_curr],
@@ -1021,13 +1050,10 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                 elseif formulation <: Union{SOCBFPowerModel, SOCBFConicPowerModel}
 
-                    acc = pm.ref(gpm, 1, :bus)
-                    
                     @constraint(gpm.model,
                         ub_cm_ext[l=1:N_ext_LN,t=T_vars_curr],
-                        pm.var(gpm, t, 1,:cm)[lineidx[lines[l,:name]]] <= 
-                        (lines[ext_lines_b,:s_max_pu][l] * LN_s_nom[l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
-                    ) # TODO: access vminpu from PSA once default set
+                        pm.var(gpm, t, 1,:cm)[lineidx[lines[l,:name]]] <= ub_ext[l]
+                    )
                     
                     @constraint(gpm.model,
                         ub_cm_fix[l=1:N_fix_LN,t=T_vars_curr],

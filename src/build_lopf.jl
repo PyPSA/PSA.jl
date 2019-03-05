@@ -1063,22 +1063,29 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                 end
 
-                if formulation <: Union{SOCWRPowerModel, SOCWRConicPowerModel, SOCBFPowerModel, SOCBFConicPowerModel, SDPWRMPowerModel, SparseSDPWRMPowerModel, QCWRPowerModel, QCWRTriPowerModel}
+                if typeof(formulation) != String && formulation <: Union{SOCWRPowerModel, SOCWRConicPowerModel, SOCBFPowerModel, SOCBFConicPowerModel, SDPWRMPowerModel, SparseSDPWRMPowerModel, QCWRPowerModel, QCWRTriPowerModel}
                     
-                    ids_ext = map(x -> reverse_lineidx[x], lines[lines[:s_nom_extendable],:][:name])
-                    ids_fix = map(x -> reverse_lineidx[x], lines[.!lines[:s_nom_extendable],:][:name])
+                    ids_ext = map(x -> reverse_lineidx[x], lines[ext_lines_b,:][:name])
+                    ids_fix = map(x -> reverse_lineidx[x], lines[fix_lines_b,:][:name])
                     
                     for (n, netw) in nws(gpm)
+
+                        l=1
                         for i in ids_fix
-                            pm.constraint_thermal_limit_from(gpm, i, nw=n)
-                            pm.constraint_thermal_limit_to(gpm, i, nw=n)
-                        end
-                        l = 1
-                        for i in ids_ext
-                            constraint_thermal_limit_from_ext(gpm, i, LN_s_nom[l], nw=n)
-                            constraint_thermal_limit_to_ext(gpm, i, LN_s_nom[l], nw=n)
+                            bound = lines[fix_lines_b,:s_max_pu][l] * lines[fix_lines_b,:s_nom][l]
+                            constraint_thermal_limit_from_fix(gpm, i, bound, nw=n)
+                            constraint_thermal_limit_to_fix(gpm, i, bound, nw=n)
                             l+=1
                         end
+
+                        l = 1
+                        for i in ids_ext
+                            bound = lines[ext_lines_b,:s_max_pu][l]*LN_s_nom[l]
+                            constraint_thermal_limit_from_ext(gpm, i, bound, nw=n)
+                            constraint_thermal_limit_to_ext(gpm, i, bound, nw=n)
+                            l+=1
+                        end
+
                     end
                 end
                 

@@ -302,3 +302,32 @@ function constraint_thermal_limit_to_ext(gpm::GenericPowerModel, i::Int, var::Un
 
     pm.constraint_thermal_limit_to(gpm, nw, cnd, t_idx, var)
 end
+
+""
+function constraint_thermal_limit_from_fix(gpm::GenericPowerModel, i::Int, external_bound::Float64; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
+    if !haskey(con(gpm, nw, cnd), :sm_fr)
+        con(gpm, nw, cnd)[:sm_fr] = Dict{Int,Any}() # note this can be a constraint or a variable bound
+    end
+
+    branch = ref(gpm, nw, :branch, i)
+    f_bus = branch["f_bus"]
+    t_bus = branch["t_bus"]
+    f_idx = (i, f_bus, t_bus)
+
+    pm.constraint_thermal_limit_from(gpm, nw, cnd, f_idx, external_bound)
+end
+
+
+""
+function constraint_thermal_limit_to_fix(gpm::GenericPowerModel, i::Int, external_bound::Float64; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
+    if !haskey(con(gpm, nw, cnd), :sm_to)
+        con(gpm, nw, cnd)[:sm_to] = Dict{Int,Any}() # note this can be a constraint or a variable bound
+    end
+
+    branch = ref(gpm, nw, :branch, i)
+    f_bus = branch["f_bus"]
+    t_bus = branch["t_bus"]
+    t_idx = (i, t_bus, f_bus)
+
+    pm.constraint_thermal_limit_to(gpm, nw, cnd, t_idx, external_bound)
+end

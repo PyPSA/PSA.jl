@@ -238,6 +238,16 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
             LN_Q_ext = get_LN(network, powermodel, :q, ext=true)
             LN_Q = [LN_Q_fix; LN_Q_ext]
 
+            LN_Q_rev_fix = get_LN(network, powermodel, :q, ext=false, reverse=true)
+            LN_Q_rev_ext = get_LN(network, powermodel, :q, ext=true, reverse=true)
+            LN_Q_rev = [LN_Q_rev_fix; LN_Q_rev_ext]
+
+            LN_rev_fix = get_LN(network, powermodel, :p, ext=false, reverse=true)
+            LN_rev_ext = get_LN(network, powermodel, :p, ext=true, reverse=true)
+            LN_rev = [LN_rev_fix; LN_rev_ext]
+
+        else
+            LN_rev = - LN   
         end
 
     end
@@ -927,23 +937,22 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                 # load data in correct order
                 loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
-                # TODO: add KCL and manual specifics to base model from powermodels
                 # TODO: add shunts
-               
+              
                 @constraint(m, nodal_p[t=T_vars_curr,n=1:N],
     
-                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-    
-                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
-    
-                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
-                    )
+                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
+                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
+                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
+                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
+                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
+                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+
+                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
+                        + sum(LN_rev[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                )
 
 
                 if has_reactive_power
@@ -956,7 +965,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                             - sum(SU_Q_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
 
                             == sum(LN_Q[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                            - sum(LN_Q[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                            + sum(LN_Q_rev[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
                     )
                 end
 

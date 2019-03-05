@@ -275,7 +275,7 @@ function get_LN(network::PSA.network_mutable, powermodel::GenericPowerModel, var
 end
 
 ""
-function constraint_thermal_limit_from_ext(gpm::GenericPowerModel, i::Int, var::JuMP.Variable; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
+function constraint_thermal_limit_from_ext(gpm::GenericPowerModel, i::Int, var::Union{JuMP.GenericAffExpr, JuMP.Variable}; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
     if !haskey(con(gpm, nw, cnd), :sm_fr)
         con(gpm, nw, cnd)[:sm_fr] = Dict{Int,Any}() # note this can be a constraint or a variable bound
     end
@@ -290,7 +290,7 @@ end
 
 
 ""
-function constraint_thermal_limit_to_ext(gpm::GenericPowerModel, i::Int, var::JuMP.Variable; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
+function constraint_thermal_limit_to_ext(gpm::GenericPowerModel, i::Int, var::Union{JuMP.GenericAffExpr, JuMP.Variable}; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
     if !haskey(con(gpm, nw, cnd), :sm_to)
         con(gpm, nw, cnd)[:sm_to] = Dict{Int,Any}() # note this can be a constraint or a variable bound
     end

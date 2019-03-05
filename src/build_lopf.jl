@@ -299,6 +299,16 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
         filter_timedependent_extremes!(p_min_pu, 0.01)
         p_nom = network.generators[fix_gens_b,:p_nom]
 
+        # slope of power factor
+        # TODO: substitute temporary default value
+        generators[:pf_max_lag] = 0.8
+        generators[:pf_max_lead] = 0.9
+
+        m_lag_ext = pf_slope.(generators[ext_gens_b,:pf_max_lag])
+        m_lead_ext = pf_slope.(generators[ext_gens_b,:pf_max_lead])
+        m_lag_fix = pf_slope.(generators[fix_gens_b,:pf_max_lag])
+        m_lead_fix = pf_slope.(generators[fix_gens_b,:pf_max_lead])
+
         rf = rf_dict[:bounds_G]
 
         if benders != "master"
@@ -322,6 +332,16 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                         rf * G_fix[gr,t] >= rf * p_nom[gr] * p_min_pu(t,gr)  
                 
                 end)
+
+                has_reactive_power ? @constraints(m, begin
+
+                    upper_bounds_G_Q_fix[gr=1:N_fix_G, t=T_params_curr],
+                        rf * G_Q_fix[gr,t] <= rf * p_max_pu(t,gr) * p_nom[gr] * m_lag_fix[gr]  
+
+                    lower_bounds_G_Q_fix[gr=1:N_fix_G, t=T_params_curr],
+                        rf * G_Q_fix[gr,t] >= rf * p_nom[gr] * p_max_pu(t,gr) * (-1) * m_lead_fix[gr]
+                
+                end) : nothing
             end
         end
 
@@ -347,15 +367,25 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
         if benders!="master" && benders!="slave"
 
-            @constraints m begin
-
-                lower_bounds_G_ext[t=T_params_curr,gr=1:N_ext_G],
-                    rf * G_ext[gr,t] >= rf * p_min_pu(t,gr) * G_p_nom[gr]
+            @constraints(m, begin
 
                 upper_bounds_G_ext[t=T_params_curr,gr=1:N_ext_G],
                     rf * G_ext[gr,t] <= rf * p_max_pu(t,gr) * G_p_nom[gr]
+ 
+                lower_bounds_G_ext[t=T_params_curr,gr=1:N_ext_G],
+                    rf * G_ext[gr,t] >= rf * p_min_pu(t,gr) * G_p_nom[gr]
 
-            end
+            end)
+                
+            has_reactive_power ? @constraints(m, begin
+                
+                upper_bounds_G_Q_ext[t=T_params_curr,gr=1:N_ext_G],
+                        rf * G_Q_ext[gr,t] <= rf * p_max_pu(t,gr) * G_p_nom[gr] * m_lag_ext[gr]
+                    
+                lower_bounds_G_Q_ext[t=T_params_curr,gr=1:N_ext_G],
+                    rf * G_Q_ext[gr,t] >= rf * p_max_pu(t,gr) * G_p_nom[gr] * (-1) * m_lead_ext[gr]
+                                
+            end) : nothing
 
         elseif benders == "slave"
 

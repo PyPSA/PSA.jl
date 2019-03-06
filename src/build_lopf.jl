@@ -125,7 +125,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
         end
         
         network_pm = convert_network(network)
-        powermodel = build_generic_model(network_pm, formulation, post, multinetwork=true, jump_model=m)
+        generic_pm = build_generic_model(network_pm, formulation, post, multinetwork=true, jump_model=m)
 
     end
 
@@ -138,7 +138,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
     if benders != "slave"
 
         @variable(m, G_p_nom[gr=1:N_ext_G])
-        @variable(m, LN_s_nom[l=1:N_ext_LN] >= 0) # for conic constraint
+        @variable(m, LN_s_nom[l=1:N_ext_LN] >= 0) # for conic constraint inference
         @variable(m, LK_p_nom[l=1:N_ext_LK])
         
         if investment_type == "continuous"
@@ -202,8 +202,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
         LK = [LK_fix; LK_ext]
         
         if typeof(formulation) != String
-            LN_fix = get_LN(network, powermodel, :p, ext=false)
-            LN_ext = get_LN(network, powermodel, :p, ext=true)
+            LN_fix = get_LN(network, generic_pm, :p, ext=false)
+            LN_ext = get_LN(network, generic_pm, :p, ext=true)
         else
             contains(formulation, "angles") ? @variable(m, THETA[1:N,1:T_params_length]) : nothing
             @variable(m, LN_fix[l=1:N_fix_LN,t=1:T_params_length])
@@ -234,20 +234,22 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
             @variable(m, ST_Q_store_ext[s=1:N_ext_ST,t=1:T_params_length])
             ST_Q_store = [ST_Q_store_fix; ST_Q_store_ext]
 
-            LN_Q_fix = get_LN(network, powermodel, :q, ext=false)
-            LN_Q_ext = get_LN(network, powermodel, :q, ext=true)
+            LN_Q_fix = get_LN(network, generic_pm, :q, ext=false)
+            LN_Q_ext = get_LN(network, generic_pm, :q, ext=true)
             LN_Q = [LN_Q_fix; LN_Q_ext]
 
-            LN_Q_rev_fix = get_LN(network, powermodel, :q, ext=false, reverse=true)
-            LN_Q_rev_ext = get_LN(network, powermodel, :q, ext=true, reverse=true)
+            LN_Q_rev_fix = get_LN(network, generic_pm, :q, ext=false, reverse=true)
+            LN_Q_rev_ext = get_LN(network, generic_pm, :q, ext=true, reverse=true)
             LN_Q_rev = [LN_Q_rev_fix; LN_Q_rev_ext]
 
-            LN_rev_fix = get_LN(network, powermodel, :p, ext=false, reverse=true)
-            LN_rev_ext = get_LN(network, powermodel, :p, ext=true, reverse=true)
+            LN_rev_fix = get_LN(network, generic_pm, :p, ext=false, reverse=true)
+            LN_rev_ext = get_LN(network, generic_pm, :p, ext=true, reverse=true)
             LN_rev = [LN_rev_fix; LN_rev_ext]
 
         else
+
             LN_rev = - LN   
+        
         end
 
     end
@@ -999,13 +1001,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                     )
                 end
 
-                gpm = powermodel
-
                 # add cm upper bounds dependant on line capacity
 
                 if typeof(formulation) != String && formulation <: Union{SOCBFPowerModel, SOCBFConicPowerModel, QCWRPowerModel, QCWRTriPowerModel}
 
-                    acc = pm.ref(gpm, 1, :bus)
+                    acc = pm.ref(generic_pm, 1, :bus)
 
                     # TODO: add option in function parameters
                     convex_relaxation = true
@@ -1037,27 +1037,27 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                 if typeof(formulation) != String && formulation <: Union{QCWRPowerModel, QCWRTriPowerModel}
                     
-                    @constraint(gpm.model,
+                    @constraint(generic_pm.model,
                         ub_cm_ext[l=1:N_ext_LN,t=T_vars_curr],
-                        pm.var(gpm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= ub_ext[l]
+                        pm.var(generic_pm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= ub_ext[l]
                     ) 
 
-                    @constraint(gpm.model,
+                    @constraint(generic_pm.model,
                         ub_cm_fix[l=1:N_fix_LN,t=T_vars_curr],
-                        pm.var(gpm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= 
+                        pm.var(generic_pm, t, 1)[:cm][(busidx[lines[l,:bus0]],busidx[lines[l,:bus1]])] <= 
                         (lines[fix_lines_b,:s_max_pu][l] * lines[fix_lines_b,:s_nom][l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
                     ) # TODO: access vminpu from PSA once default set
 
                 elseif formulation <: Union{SOCBFPowerModel, SOCBFConicPowerModel}
 
-                    @constraint(gpm.model,
+                    @constraint(generic_pm.model,
                         ub_cm_ext[l=1:N_ext_LN,t=T_vars_curr],
-                        pm.var(gpm, t, 1,:cm)[lineidx[lines[l,:name]]] <= ub_ext[l]
+                        pm.var(generic_pm, t, 1,:cm)[lineidx[lines[l,:name]]] <= ub_ext[l]
                     )
                     
-                    @constraint(gpm.model,
+                    @constraint(generic_pm.model,
                         ub_cm_fix[l=1:N_fix_LN,t=T_vars_curr],
-                        pm.var(gpm, t, 1,:cm)[lineidx[lines[l,:name]]] <= 
+                        pm.var(generic_pm, t, 1,:cm)[lineidx[lines[l,:name]]] <= 
                         (lines[fix_lines_b,:s_max_pu][l] * lines[fix_lines_b,:s_nom][l] / acc[busidx[lines[l,:bus0]]]["vmin"])^2
                     ) # TODO: access vminpu from PSA once default set
 
@@ -1068,21 +1068,21 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                     ids_ext = map(x -> reverse_lineidx[x], lines[ext_lines_b,:][:name])
                     ids_fix = map(x -> reverse_lineidx[x], lines[fix_lines_b,:][:name])
                     
-                    for (n, netw) in nws(gpm)
+                    for (n, netw) in nws(generic_pm)
 
                         l=1
                         for i in ids_fix
                             bound = lines[fix_lines_b,:s_max_pu][l] * lines[fix_lines_b,:s_nom][l]
-                            constraint_thermal_limit_from_fix(gpm, i, bound, nw=n)
-                            constraint_thermal_limit_to_fix(gpm, i, bound, nw=n)
+                            constraint_thermal_limit_from_fix(generic_pm, i, bound, nw=n)
+                            constraint_thermal_limit_to_fix(generic_pm, i, bound, nw=n)
                             l+=1
                         end
 
                         l = 1
                         for i in ids_ext
                             bound = lines[ext_lines_b,:s_max_pu][l]*LN_s_nom[l]
-                            constraint_thermal_limit_from_ext(gpm, i, bound, nw=n)
-                            constraint_thermal_limit_to_ext(gpm, i, bound, nw=n)
+                            constraint_thermal_limit_from_ext(generic_pm, i, bound, nw=n)
+                            constraint_thermal_limit_to_ext(generic_pm, i, bound, nw=n)
                             l+=1
                         end
 

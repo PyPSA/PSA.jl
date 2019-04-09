@@ -27,7 +27,7 @@ mutable struct network_mutable
 end
 
 include("build_lopf.jl")
-include("build_block_lopf.jl")
+#include("build_block_lopf.jl") # BlockDecomposition failing for julia >= 0.7
 include("run_lopf.jl")
 include("run_iterative_lopf.jl")
 include("run_benders_lopf.jl")

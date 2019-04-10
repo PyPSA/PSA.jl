@@ -1,5 +1,5 @@
 using JuMP
-using MathProgBase
+using MathOptInterface
 
 # TODO: neglects storage units and storages at the moment
 

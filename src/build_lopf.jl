@@ -1,5 +1,5 @@
 using JuMP
-using MathProgBase
+using MathOptInterface
 using PowerModels
 pm = PowerModels
 
@@ -205,7 +205,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
             LN_fix = get_LN(network, generic_pm, :p, ext=false)
             LN_ext = get_LN(network, generic_pm, :p, ext=true)
         else
-            contains(formulation, "angles") ? @variable(m, THETA[1:N,1:T_params_length]) : nothing
+            occursin("angles",formulation) ? @variable(m, THETA[1:N,1:T_params_length]) : nothing
             @variable(m, LN_fix[l=1:N_fix_LN,t=1:T_params_length])
             @variable(m, LN_ext[l=1:N_ext_LN,t=1:T_params_length])
         end
@@ -780,21 +780,21 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                         SU_soc[s,1] == 
                         (SU_soc[s,T]
                         + storage_units[s,:efficiency_store] * SU_store[s,1]
-                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
+                        - (1 ./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
                         + inflow[1,s] - SU_spill[s,1] )
 
                     su_logic2[s=not_cyclic_i],
                         SU_soc[s,1] == 
                         (storage_units[s,:state_of_charge_initial]
                         + storage_units[s,:efficiency_store] * SU_store[s,1]
-                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
+                        - (1 ./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,1]
                         + inflow[1,s] - SU_spill[s,1])
         
                     su_logic3[s=1:N_SU,t=2:T],
                         SU_soc[s,t] == 
                         (SU_soc[s,t-1]
                         + storage_units[s,:efficiency_store] * SU_store[s,t]
-                        - (1./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,t]
+                        - (1 ./storage_units[s,:efficiency_dispatch]) * SU_dispatch[s,t]
                         + inflow[t,s] - SU_spill[s,t] )
             end)
         end
@@ -973,31 +973,31 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
               
                 @constraint(m, nodal_p[t=T_vars_curr,n=1:N],
     
-                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                        + sum(links[findall(in([reverse_busidx[n]]),links[:bus1]),:efficiency]
+                        .* LK[ findall(in([reverse_busidx[n]]),links[:bus1]) ,t])
+                        + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                        - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                        - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                        + sum(LN_rev[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                        == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t])
+                        + sum(LN_rev[findall(in([reverse_busidx[n]]), lines[:bus1]),t]) 
                 )
 
 
                 if has_reactive_power
                     @constraint(m, nodal_q[t=T_vars_curr,n=1:N],
         
-                            sum(G_Q[findin(generators[:bus], [reverse_busidx[n]]), t])
-                            + sum(SU_Q_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                            sum(G_Q[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                            + sum(SU_Q_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                            #- row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                            - sum(SU_Q_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                            #- row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                            - sum(SU_Q_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                            == sum(LN_Q[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                            + sum(LN_Q_rev[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                            == sum(LN_Q[findall(in([reverse_busidx[n]]), lines[:bus0]),t])
+                            + sum(LN_Q_rev[findall(in([reverse_busidx[n]]), lines[:bus1]),t]) 
                     )
                 end
 
@@ -1099,34 +1099,34 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                     @constraint(m, nodal[t=T_vars_curr,n=1:N],
     
-                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t_vars_curr])
-                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t_vars_curr])
-                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t_vars_curr])
+                            sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t_vars_curr])
+                            + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                            .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t_vars_curr])
+                            + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t_vars_curr])
     
-                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t_vars_curr])
-                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t_vars_curr])
+                            - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                            - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t_vars_curr])
+                            - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t_vars_curr])
     
-                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t_vars_curr])
-                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t_vars_curr]) 
+                            == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t_vars_curr])
+                            - sum(LN[findall(in([reverse_busidx[n]]), lines[:bus1]),t_vars_curr]) 
                     )
 
                 else
 
                     @constraint(m, nodal[t=T_vars_curr,n=1:N],
     
-                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                            sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                            + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                            .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                            + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
     
-                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                            - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                            - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                            - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
     
-                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) 
+                            == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t])
+                            - sum(LN[findall(in([reverse_busidx[n]]), lines[:bus1]),t]) 
                     )
                 end
 
@@ -1153,17 +1153,17 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                     @constraint(m, nodal[t=T_vars_curr,n=1:N], (
 
-                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                        + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                            .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                        + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                        - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                        - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                        - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+                        == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t])
+                        - sum(LN[findall(in([reverse_busidx[n]]), lines[:bus1]),t]) ))
 
                     @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_vars_curr],
                         rf * (
@@ -1196,17 +1196,17 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                         @constraint(m, nodal[t=T_vars_curr,n=1:N], (
 
-                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t_vars_curr])
-                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                                .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t_vars_curr])
-                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t_vars_curr])
+                            sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t_vars_curr])
+                            + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                                .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t_vars_curr])
+                            + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t_vars_curr])
 
-                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t_vars_curr])
-                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t_vars_curr])
+                            - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                            - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t_vars_curr])
+                            - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t_vars_curr])
 
-                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t_vars_curr])
-                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t_vars_curr]) ))
+                            == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t_vars_curr])
+                            - sum(LN[findall(in([reverse_busidx[n]]), lines[:bus1]),t_vars_curr]) ))
 
                         @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_vars_curr],
                             rf * (
@@ -1235,17 +1235,17 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                         @constraint(m, nodal[t=T_vars_curr,n=1:N], (
 
-                            sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                            + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                                .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                            + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                            sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                            + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                                .* LK[ findall([reverse_busidx[n]]), in(links[:bus1]) ,t])
+                            + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                            - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                            - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                            - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                            - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                            - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                            - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                            == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                            - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) ))
+                            == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t])
+                            - sum(LN[findall(in([reverse_busidx[n]]), lines[:bus1]),t]) ))
 
                         @constraint(m, flows_upper[l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b)),c in candidates[l],t=T_params_curr],
                             rf * (
@@ -1283,17 +1283,17 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                 @constraint(m, nodal[t=T_vars_curr,n=1:N], (
 
-                        sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                                .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                        + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                                .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                        + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                        - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                        - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        == sum(LN[findin(lines[:bus0], [reverse_busidx[n]]),t])
-                        - sum(LN[findin(lines[:bus1], [reverse_busidx[n]]),t]) )        
+                        == sum(LN[findall(in([reverse_busidx[n]]), lines[:bus0]),t])
+                        - sum(LN[findall(in([reverse_busidx[n]]), lines[:bus1]),t]) )        
                 )
 
                 @NLconstraint(m, flows_ext[t=T_vars_curr,l=(sum(fix_lines_b)+1):(sum(ext_lines_b)+sum(fix_lines_b))],
@@ -1315,16 +1315,16 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                 loads = network.loads_t["p"][:,Symbol.(network.loads[:name])]
 
                 @constraint(m, balance[t=T_vars_curr,n=1:N], (
-                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                    + sum(LN[ findall(in([reverse_busidx[n]]), lines[:bus1]) ,t])
+                    + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                        .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                    + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                    - sum(LN[ findall(in([reverse_busidx[n]]), lines[:bus0]) ,t])
+                    - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                    - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
                     == 0 )
                 )
@@ -1386,16 +1386,16 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                 @constraint(m, balance[t=T_vars_curr,n=1:N], (
 
-                    sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                    + sum(LN[ findin(lines[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                        .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                    + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                    + sum(LN[ findall(in([reverse_busidx[n]]), lines[:bus1]) ,t])
+                    + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                        .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                    + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                    - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                    - sum(LN[ findin(lines[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                    - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                    - sum(LN[ findall(in([reverse_busidx[n]]), lines[:bus0]) ,t])
+                    - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                    - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
                     == 0 )
                 )
@@ -1461,28 +1461,28 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                 @constraint(m, flows[t=T_vars_curr,l=1:L],
                     sum( ptdf[l,n]
-                    * (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    * (   sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                        + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                            .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                        + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                        - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                        - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
                         )
                     for n in 1:N
                     ) == LN[l,t] 
                 )
 
                 @constraint(m, balance[t=T_vars_curr],
-                    sum( (   sum(G[findin(generators[:bus], [reverse_busidx[n]]), t])
-                        + sum(links[findin(links[:bus1], [reverse_busidx[n]]),:efficiency]
-                            .* LK[ findin(links[:bus1], [reverse_busidx[n]]) ,t])
-                        + sum(SU_dispatch[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                    sum( (   sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
+                        + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
+                            .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
+                        + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
-                        - row_sum(loads[t,findin(network.loads[:bus],[reverse_busidx[n]])],1)
-                        - sum(LK[ findin(links[:bus0], [reverse_busidx[n]]) ,t])
-                        - sum(SU_store[ findin(storage_units[:bus], [reverse_busidx[n]]) ,t])
+                        - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])
+                        - sum(LK[ findall(in([reverse_busidx[n]]), links[:bus0]) ,t])
+                        - sum(SU_store[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
                         ) for n in 1:N
                     ) == 0 
                 )
@@ -1503,14 +1503,14 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
         ## carbon emissions <= emission limit
         if t_vars_curr==T_params_length
 
-            carrier_index(carrier) = findin(generators[:carrier], carrier)
+            carrier_index(carrier) = findall(in(carrier),generators[:carrier])
     
             if benders != "master" && sn==0
                 if nrow(network.global_constraints)>0 && in("co2_limit", network.global_constraints[:name])
                     co2_limit = network.global_constraints[network.global_constraints[:name].=="co2_limit", :constant]
                     println("CO2_limit is $(co2_limit[1]) t")
                     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
-                    @constraint(m, co2limit, sum(sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
+                    @constraint(m, co2limit, sum(sum(network.snapshots[:weightings][t]*dot(1 ./generators[carrier_index(nonnull_carriers) , :efficiency],
                                 G[carrier_index(nonnull_carriers),t]) for t=1:T)
                                 * select_names(network.carriers, [carrier])[:co2_emissions]
                                 for carrier in network.carriers[:name]) .<=  co2_limit)
@@ -1560,7 +1560,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                     fix_ren_gens_b = .!generators[:p_nom_extendable][ren_gens_b]
                     ext_ren_gens_b = .!fix_ren_gens_b
                     
-                    ren_gens_b_orig = [in(i,findin(network.generators[:carrier], null_carriers)) ? true : false for i=1:size(network.generators)[1]]
+                    ren_gens_b_orig = [in(i,findall(in(null_carriers),network.generators[:carrier])) ? true : false for i=1:size(network.generators)[1]]
                     fix_ren_gens_b_orig = .!network.generators[:p_nom_extendable][ren_gens_b_orig]
                     ext_ren_gens_b_orig = .!fix_ren_gens_b_orig
                     
@@ -1576,8 +1576,8 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                     exist_fix_ren_gens ? p_max_pu_fix = convert(Array,p_max_pu_full[:,fix_ren_gens_b_orig]) : nothing
                     p_max_pu_ext = convert(Array,p_max_pu_full[:,ext_ren_gens_b_orig])
     
-                    loc_fix = findin(fix_ren_gens[:name], string.(p_max_pu_full.colindex.names))
-                    loc_ext = findin(ext_ren_gens[:name], string.(p_max_pu_full.colindex.names))
+                    loc_fix = findall(in(string.(p_max_pu_full.colindex.names)),fix_ren_gens[:name])
+                    loc_ext = findall(in(string.(p_max_pu_full.colindex.names)),ext_ren_gens[:name])
     
                     loc_fix_b = [in(i,loc_fix) ? true : false for i=1:length(def_p_max_pu_fix)]
                     loc_ext_b = [in(i,loc_ext) ? true : false for i=1:length(def_p_max_pu_ext)]

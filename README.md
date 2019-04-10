@@ -43,7 +43,7 @@ network = PSA.import_network("/your/exported/PyPSA/network/")
 
 using Clp
 
-solver = ClpSolver()
+solver = with_optimizer(Clp.Optimizer)
 
 m = PSA.run_lopf(network, solver)
 

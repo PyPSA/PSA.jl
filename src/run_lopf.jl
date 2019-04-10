@@ -1,5 +1,5 @@
 using JuMP
-using MathProgBase
+using MathOptInterface
 using PowerModels
 pm = PowerModels
 

@@ -5,7 +5,7 @@ using Plots
 include("compat.jl")
 
 function time_dependent_components(network)
-    fields = String.(fieldnames(network))
+    fields = String.(fieldnames(typeof(network)))
     components = []
     for field=fields
         if field[end-1:end] == "_t"
@@ -17,7 +17,7 @@ end
 
 
 function static_components(network)
-    fields = String.(fieldnames(network))
+    fields = String.(fieldnames(typeof(network)))
     components = []
     for field=fields
         if field[end-1:end] != "_t"
@@ -45,7 +45,7 @@ function align_component_order!(network)
     for comp=components_t
         order = Symbol.(getfield(network, Symbol(String(comp)[1:end-2]))[:name])
         for attr in keys(getfield(network, comp))
-            if length(getfield(network,comp)[attr])==length(order)
+            if size(getfield(network,comp)[attr],2)==length(order)
                 getfield(network,comp)[attr]= getfield(network,comp)[attr][:, order]
             end
         end
@@ -62,11 +62,11 @@ idx_by(dataframe, col, values) = select_by(dataframe, col, values)[:idx]
 
 
 function select_by(dataframe, col, selector)
-    if length(findin(dataframe[col], selector))==0
+    if length(findall(in(selector),dataframe[col]))==0
         return dataframe[repeat(Bool[false],outer=nrow(dataframe)) , :]
     else
         mdict = Dict(zip(dataframe[col], Iterators.countfrom(1)))
-        ids = Array{Int,1}(0)
+        ids = Array{Int,1}(undef, 0)
         for i in selector
             push!(ids, mdict[i])
         end
@@ -103,7 +103,7 @@ function get_switchable_as_dense(network, component, attribute, snapshots=0)
     if length(not_included)>0
         attribute = Symbol.(attribute)
         df = select_names(getfield(network, component), not_included)
-        df = names!(DataFrame(repmat(transpose(Array(df[attribute])), T)),
+        df = names!(DataFrame(repeat(transpose(Array(df[attribute])), T)),
                 Symbol.(not_included))
         dense = [dense df]
     end
@@ -318,11 +318,11 @@ function get_shortest_line_paths(network)
 end
 
 
-function row_sum(df, row_id)
-    if length(df[row_id,:]) == 0
+function row_sum(df_row)
+    if length(df_row) == 0
         return 0.
     else
-        return sum([df[row_id,i] for i in 1:length(df[row_id,:])])
+        return sum([df_row[i] for i in 1:length(df_row)])
     end
 end
 
@@ -491,9 +491,9 @@ function colswitch_cm(model::JuMP.Model)
     println(model.colNames)
     switches = []
     T = size(model[:LN_ext])[2]
-    push!(switches,find(x->x==true, .![contains(i, ",") for i in variables]))
+    push!(switches,find(x->x==true, .![occursin(",", i) for i in variables]))
     for t=1:T
-        push!(switches,find(x->x==true, [contains(i, ",$t]") for i in variables]))
+        push!(switches,find(x->x==true, [occursin(",$t]", i) for i in variables]))
     end
     return reverse(vcat(switches...))
 end
@@ -630,8 +630,8 @@ end
 
 """Filters extremely small time series values (e.g. p_max_pu) below a threshold"""
 function filter_timedependent_extremes!(z, threshold::Float64)
-    for c in z.df.columns[2:end] 
-        c[(c.<threshold).&(c.!=0)] = threshold 
+    for c in getfield(z.df,:columns)[2:end] 
+        c[(c.<threshold).&(c.!=0)] .= threshold 
     end
     return z.df
 end
@@ -766,10 +766,10 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
 
     generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
-    carrier_index(carrier) = findin(generators[:carrier], carrier)
+    carrier_index(carrier) = findall(in(carrier),generators[:carrier])
 
     # carbon emissions
-    co2, = sum(sum(network.snapshots[:weightings][t]*dot(1./generators[carrier_index(nonnull_carriers) , :efficiency],
+    co2, = sum(sum(network.snapshots[:weightings][t]*dot(1 ./ generators[carrier_index(nonnull_carriers) , :efficiency],
                                 getvalue(G[carrier_index(nonnull_carriers),t])) for t=1:T)
                                 * select_names(network.carriers, [carrier])[:co2_emissions]
                                 for carrier in network.carriers[:name])
@@ -781,24 +781,5 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / total_gen
 
     println("RES share:\t$(res*100) %")
-
-    # curtailment
-    # sum_of_dispatch = sum(network.snapshots[:weightings][t]*getvalue(G[findin(generators[:name],string.(network.generators_t["p_max_pu"].colindex.names)),t]) for t=1:T)
-    # p_nom_opt = generators[:p_nom_opt][findin(generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))]
-    # ren_gens_i = findin(network.generators[:name], string.(network.generators_t["p_max_pu"].colindex.names))
-    # ren_gens_b = [in(i,ren_gens_i) ? true : false for i=1:size(network.generators)[1]]
-    # fix_ren_gens_b = .!network.generators[:p_nom_extendable][ren_gens_b]
-    # p_max_pu = network.generators_t["p_max_pu"][:,2:end]
-    # p_max_pu = [p_max_pu[:,fix_ren_gens_b] p_max_pu[:,.!fix_ren_gens_b]]
-    # p_max_pu = convert(Array,p_max_pu)
-    # sum_of_p_max_pu = sum(network.snapshots[:weightings][t]*p_max_pu[t,:] for t=1:T)
-    # println(p_nom_opt.*sum_of_p_max_pu)
-    # println(sum_of_dispatch)
-    # println(sum_of_dispatch ./ (p_nom_opt.*sum_of_p_max_pu))
-    # curtailment = 1 - ( sum(sum_of_dispatch) / dot(p_nom_opt,sum_of_p_max_pu) )
-
-    #println("Curtailment:\t$(curtailment*100) %")
-
-    println("")
 
 end

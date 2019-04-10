@@ -2,6 +2,10 @@ module PSA
 
 using DataFrames, CSV, LightGraphs, Gurobi
 
+if VERSION >= v"0.7"
+    using LinearAlgebra
+end
+
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
 
 mutable struct network_mutable
@@ -154,8 +158,8 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
             println("Importing $folder/$component.csv")
             # fallback for missing values
             try
-                setfield!(network,component,CSV.read("$folder/$component.csv"; truestring="True",
-                                                    falsestring="False"))
+                setfield!(network,component,DataFrame(CSV.File("$folder/$component.csv"; truestrings=["True"],
+                                                    falsestrings=["False"])))
             catch y
                if (typeof(y)==Missings.MissingException) | (typeof(y) == BoundsError)
                    setfield!(network,component,readtable("$folder/$component.csv"; truestrings=["True"],
@@ -184,9 +188,9 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
 
                 # fallback for missing values for a non-null column type, might be deprecated soon
                 try
-                    getfield(network,component_t)[attr]= (
-                    CSV.read("$folder/$component-$attr.csv"; truestring="True", falsestring="False") )
+                    getfield(network,component_t)[attr]= DataFrame(CSV.File("$folder/$component-$attr.csv"; truestrings=["True"], falsestrings=["False"]) )
                 catch y
+                    println(y)
                     if (typeof(y)==Missings.MissingException) | (typeof(y) == BoundsError)
                         getfield(network,component_t)[attr]= (
                             readtable("$folder/$component-$attr.csv"; truestrings=["True"], falsestrings=["False"]) )
@@ -196,25 +200,25 @@ function import_network(folder)#; round_num_parallel::Bool=false, fix_all_except
         end
     end
     initializer = Network()
-    for field=setdiff(fieldnames(network), fieldnames(initializer))
+    for field=setdiff(fieldnames(typeof(network)), fieldnames(typeof(initializer)))
         setfield!(network, field, getfield(initializer, field))
     end
 
     # TODO: temporary remove of links tags, since they distort output
     try
-        delete!(network.links, :tags)
+        deletecols!(network.links, :tags)
     catch
-        println("No link tags to delete!")
+        println("No link tags to deletecols!")
     end
     try
-        delete!(network.links, :geometry)
+        deletecols!(network.links, :geometry)
     catch
-        println("No link geometry to delete!")
+        println("No link geometry to deletecols!")
     end
-    network.links[:p_nom_extendable] = true
-    network.links[:p_nom_max] = 8000.0
 
-    # TODO: temporary limit p_nom_max=Inf to 100000
+    # TODO: temporary
+    network.links[:p_nom_extendable] = true
+    network.links[:p_nom_max] = 8000
     ext_gens_b = network.generators[:p_nom_extendable]
     inf_gens_b = network.generators[:p_nom_max] .== Inf
     network.generators[ext_gens_b .& inf_gens_b, :p_nom_max] = 5e4
@@ -226,7 +230,7 @@ end
 
 function export_network(network, folder)
     !ispath(folder) ? mkdir(folder) : nothing
-    components_t = [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    components_t = [field for field=fieldnames(typeof(network)) if String(field)[end-1:end]=="_t"]
     for field_t in components_t
         for df_name=keys(getfield(network,field_t))
             if nrow(getfield(network,field_t)[df_name])>0
@@ -239,7 +243,7 @@ function export_network(network, folder)
             end
         end
     end
-    components = [field for field=fieldnames(network) if String(field)[end-1:end]!="_t"]
+    components = [field for field=fieldnames(typeof(network)) if String(field)[end-1:end]!="_t"]
     for field in components
         CSV.write("$folder/$field.csv", getfield(network, field))
     end

@@ -6,7 +6,7 @@ using NetCDF
 
 function write_to_netcdffile(network, filename)
     tim=collect(1:size(network.snapshots)[1])
-    components_t = [field for field=fieldnames(network) if String(field)[end-1:end]=="_t"]
+    components_t = [field for field=fieldnames(typeof(network)) if String(field)[end-1:end]=="_t"]
     components_eq = [Symbol(String(field)[1:end-2]) for field=components_t]
     dyn_vs_stats = Dict(zip(components_t, components_eq))
     in(:loads_t,keys(dyn_vs_stats)) ? dyn_vs_stats[:loads_t]=:bus : nothing
@@ -23,7 +23,7 @@ function write_to_netcdffile(network, filename)
             end
         end
     end
-    components = [field for field=fieldnames(network) if String(field)[end-1:end]!="_t"]
+    components = [field for field=fieldnames(typeof(network)) if String(field)[end-1:end]!="_t"]
     for field in components
         for attr in names(getfield(network, field))
             @show field, attr

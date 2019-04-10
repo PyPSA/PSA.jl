@@ -43,7 +43,7 @@ function val(element, attr::String, translator::Dict, busidx::Dict)
     )
 
     if in(translator[attr], keys(element.df.colindex))
-        if contains(attr,"bus")
+        if occursin("bus",attr)
             return busidx[element[translator[attr]]]
         else
             return element[translator[attr]]

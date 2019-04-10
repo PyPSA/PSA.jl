@@ -4,6 +4,7 @@ using DataFrames, CSV, LightGraphs, Gurobi
 
 if VERSION >= v"0.7"
     using LinearAlgebra
+    using SparseArrays
 end
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!

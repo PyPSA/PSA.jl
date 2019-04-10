@@ -1237,7 +1237,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                             sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
                             + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
-                                .* LK[ findall([reverse_busidx[n]]), in(links[:bus1]) ,t])
+                                .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
                             + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
                             - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])

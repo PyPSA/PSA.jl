@@ -15,8 +15,8 @@ function run_benders_lopf(network, solver;
     mip_gap::Float64 = 1e-8,
     bigM::Float64 = 1e12,
     max_iterations::Int64 =  1000,
-    relax::Bool = false,
-    relax_threshold::Float64 = 1e5,
+    #relax::Bool = false, # not reimplemented in JuMP 0.19.0
+    #relax_threshold::Float64 = 1e5,  # not reimplemented in JuMP 0.19.0
     round::Bool = false,
     round_threshold::Float64 = 0.5,
     inexact_iterations::Int64 = 0,
@@ -136,13 +136,14 @@ function run_benders_lopf(network, solver;
 
         push!(memory_master,Base.summarysize(model_master)/1e6)
        
-        status_master = solve(model_master, relaxation=relax);
+        JuMP.optimize!(model_master)#, relaxation=relax);
+        status_master = JuMP.termination_status(model_master)
 
         # cases of master problem
-        if status_master == :Infeasible
+        if status_master == MOI.INFEASIBLE
 
             # print iis if infeasible
-            if typeof(solver) == Gurobi.GurobiSolver
+            if solver.constructor == Gurobi.Optimizer
                 println("ERROR: Master problem is infeasible. The IIS is:")
                 println(get_iis(model_master))
             end
@@ -158,13 +159,13 @@ function run_benders_lopf(network, solver;
             investment_type=="integer_bigm" ? LN_opt_current = nothing : LN_inv_current = zeros(nrow(network.lines[ext_lines_b,:]))
             setvalue(model_master[:ALPHA], -bigM)
 
-        elseif status_master == :Optimal
+        elseif status_master == MOI.OPTIMAL
 
-            objective_master_current = getobjectivevalue(model_master)
-            G_p_nom_current = getvalue(model_master[:G_p_nom])
-            LN_s_nom_current = getvalue(model_master[:LN_s_nom])
-            N_ext_LK>0 ? LK_p_nom_current = getvalue(model_master[:LK_p_nom]) : nothing
-            investment_type=="integer_bigm" ? LN_opt_current = getvalue(model_master[:LN_opt]) : LN_inv_current = getvalue(model_master[:LN_inv])
+            objective_master_current = JuMP.objective_value(model_master)
+            G_p_nom_current = JuMP.value.(model_master[:G_p_nom])
+            LN_s_nom_current = JuMP.value.(model_master[:LN_s_nom])
+            N_ext_LK>0 ? LK_p_nom_current = JuMP.value.(model_master[:LK_p_nom]) : nothing
+            investment_type=="integer_bigm" ? LN_opt_current = JuMP.value.(model_master[:LN_opt]) : LN_inv_current = JuMP.value.(model_master[:LN_inv])
 
         else
             error("Odd status of master problem: $status_master")
@@ -216,12 +217,12 @@ function run_benders_lopf(network, solver;
 
             for gr=1:N_ext_G
 
-                JuMP.setRHS(
+                JuMP.set_standard_form_rhs(
                     model_slave[:lower_bounds_G_ext][t,gr],
                     rf * G_p_nom_current[gr] * p_min_pu(t,gr)
                 )
 
-                JuMP.setRHS(
+                JuMP.set_standard_form_rhs(
                     model_slave[:upper_bounds_G_ext][t,gr],
                     rf * G_p_nom_current[gr] * p_max_pu(t,gr)
                 )
@@ -234,12 +235,12 @@ function run_benders_lopf(network, solver;
 
             for l=1:N_ext_LN
 
-                JuMP.setRHS(
+                JuMP.set_standard_form_rhs(
                     model_slave[:lower_bounds_LN_ext][t,l],
                     rf * (-1) * network.lines[ext_lines_b,:s_max_pu][l] * LN_s_nom_current[l]
                 )
                 
-                JuMP.setRHS(
+                JuMP.set_standard_form_rhs(
                     model_slave[:upper_bounds_LN_ext][t,l],
                     rf * network.lines[ext_lines_b,:s_max_pu][l] * LN_s_nom_current[l]
                 )
@@ -254,12 +255,12 @@ function run_benders_lopf(network, solver;
     
                 for l=1:N_ext_LK
     
-                    JuMP.setRHS(
+                    JuMP.set_standard_form_rhs(
                         model_slave[:lower_bounds_LK_ext][t,l],
                         rf * LK_p_nom_current[l] * network.links[ext_links_b, :p_min_pu][l]
                     )
                     
-                    JuMP.setRHS(
+                    JuMP.set_standard_form_rhs(
                         model_slave[:upper_bounds_LK_ext][t,l],
                         rf * LK_p_nom_current[l] * network.links[ext_links_b, :p_max_pu][l]
                     )
@@ -283,14 +284,14 @@ function run_benders_lopf(network, solver;
                             rhs = 0.0
                         end
 
-                        JuMP.setRHS(model_slave[:flows_upper][l,c,t],rhs)
+                        JuMP.set_standard_form_rhs(model_slave[:flows_upper][l,c,t],rhs)
                         
                         rhs = rf * ( 1 - LN_opt_current[l,c] ) * bigm_lower[l]
                         if (rhs < 1e-4 && rhs > -1e-4)
                             rhs = 0.0
                         end
 
-                        JuMP.setRHS(model_slave[:flows_lower][l,c,t], rhs)
+                        JuMP.set_standard_form_rhs(model_slave[:flows_lower][l,c,t], rhs)
 
                     end
 
@@ -301,44 +302,45 @@ function run_benders_lopf(network, solver;
         end
 
         # solve slave problems
-        statuses_slave = Symbol[]
+        statuses_slave = MOI.TerminationStatusCode[]
         for i=1:N_slaves
-            push!(statuses_slave, solve(models_slave[i])) 
+            JuMP.optimize!(models_slave[i])
+            push!(statuses_slave, JuMP.termination_status(models_slave[i])) 
         end
         status_slave = minimum(statuses_slave)
 
         # print iis if infeasible
         for i in length(statuses_slave)
-            if statuses_slave[i] == :Infeasible && typeof(solver) == Gurobi.GurobiSolver
+            if statuses_slave[i] == MOI.INFEASIBLE && solver.constructor == Gurobi.Optimizer
                 println("WARNING: Subproblem $i is infeasible. The IIS is:")
                 println(get_iis(models_slave[i]))
             end
         end
 
         # get results of slave problems
-        objective_slave_current = sum(getobjectivevalue(models_slave[i]) for i=1:N_slaves)
-        duals_lower_bounds_G_ext = getduals(models_slave, :lower_bounds_G_ext, filter_b=filter_duals)
-        duals_upper_bounds_G_ext = getduals(models_slave, :upper_bounds_G_ext, filter_b=filter_duals)
-        duals_lower_bounds_LN_ext = getduals(models_slave, :lower_bounds_LN_ext, filter_b=filter_duals)
-        duals_upper_bounds_LN_ext = getduals(models_slave, :upper_bounds_LN_ext, filter_b=filter_duals)
+        objective_slave_current = sum(JuMP.objective_value(models_slave[i]) for i=1:N_slaves)
+        duals_lower_bounds_G_ext = duals(models_slave, :lower_bounds_G_ext, filter_b=filter_duals)
+        duals_upper_bounds_G_ext = duals(models_slave, :upper_bounds_G_ext, filter_b=filter_duals)
+        duals_lower_bounds_LN_ext = duals(models_slave, :lower_bounds_LN_ext, filter_b=filter_duals)
+        duals_upper_bounds_LN_ext = duals(models_slave, :upper_bounds_LN_ext, filter_b=filter_duals)
 
         if N_ext_LK > 0
-            duals_lower_bounds_LK_ext = getduals(models_slave, :lower_bounds_LK_ext, filter_b=filter_duals)
-            duals_upper_bounds_LK_ext = getduals(models_slave, :upper_bounds_LK_ext, filter_b=filter_duals)
+            duals_lower_bounds_LK_ext = duals(models_slave, :lower_bounds_LK_ext, filter_b=filter_duals)
+            duals_upper_bounds_LK_ext = duals(models_slave, :upper_bounds_LK_ext, filter_b=filter_duals)
         end
         
         if investment_type=="integer_bigm"
-            duals_flows_upper = getduals_flows(models_slave, :flows_upper, filter_b=filter_duals)
-            duals_flows_lower = getduals_flows(models_slave, :flows_lower, filter_b=filter_duals)
+            duals_flows_upper = duals_flows(models_slave, :flows_upper, filter_b=filter_duals)
+            duals_flows_lower = duals_flows(models_slave, :flows_lower, filter_b=filter_duals)
         end
 
-        ALPHA_current = sum(getvalue(model_master[:ALPHA][g]) for g=1:N_cuts)
+        ALPHA_current = sum(JuMP.value(model_master[:ALPHA][g]) for g=1:N_cuts)
 
         # relaxation handling
-        if objective_slave_current - ALPHA_current <= relax_threshold && relax == true
-            println("Drop relaxation!")
-            relax = false
-        end
+        # if objective_slave_current - ALPHA_current <= relax_threshold && relax == true
+        #     println("Drop relaxation!")
+        #     relax = false
+        # end
 
         # inexactness handling
         if inexact_iterations!=0 && (objective_slave_current - ALPHA_current <= inexact_threshold || inexact_iterations == iteration)
@@ -348,7 +350,7 @@ function run_benders_lopf(network, solver;
         end
 
         # go through cases of subproblems
-        if (status_slave == :Optimal && 
+        if (status_slave == MOI.OPTIMAL && 
             abs(objective_slave_current - ALPHA_current) <= tolerance)
 
             push!(lbs, ALPHA_current)
@@ -410,11 +412,11 @@ function run_benders_lopf(network, solver;
             if investment_type=="integer_bigm"
 
                 cut_flows_lower = sum(  
-                        duals_flows_lower[slave_id][l,c,t] * rf_dict[:flows] *( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
+                        duals_flows_lower[slave_id][l,c+1,t] * rf_dict[:flows] *( 1 - model_master[:LN_opt][l,c] ) * bigm_lower[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows_upper = sum(  
-                        duals_flows_upper[slave_id][l,c,t] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
+                        duals_flows_upper[slave_id][l,c+1,t] * rf_dict[:flows] * ( model_master[:LN_opt][l,c] - 1 ) * bigm_upper[l] 
                     for t=T_range_curr for l=1:N_ext_LN for c in candidates[l])
 
                 cut_flows = cut_flows_lower + cut_flows_upper
@@ -424,7 +426,7 @@ function run_benders_lopf(network, solver;
             # calculate uncoupled cut components
             cut_const = get_benderscut_constant(models_slave[slave_id],uncoupled_slave_constrs)
 
-            if (status_slave == :Optimal &&
+            if (status_slave == MOI.OPTIMAL &&
                 abs(objective_slave_current - ALPHA_current) > tolerance)
 
                 rf = rf_dict[:benderscut]
@@ -444,7 +446,7 @@ function run_benders_lopf(network, solver;
                 end
             end
             
-            if status_slave == :Infeasible
+            if status_slave == MOI.INFEASIBLE
 
                 if investment_type!="integer_bigm"
 

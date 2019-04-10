@@ -4,6 +4,7 @@ using DataFrames, CSV, LightGraphs, Gurobi
 
 if VERSION >= v"0.7"
     using LinearAlgebra
+    using SparseArrays
 end
 
 export Network, import_network, idx, rev_idx, select_names, select_by, idx_by, to_symbol, append_idx_col!
@@ -35,7 +36,7 @@ include("build_lopf.jl")
 include("run_lopf.jl")
 include("run_iterative_lopf.jl")
 include("run_benders_lopf.jl")
-include("run_lazybenders_lopf.jl")
+#include("run_lazybenders_lopf.jl") #solver independent callbacks not implemented in JuMP v0.19.0, follow https://github.com/JuliaOpt/JuMP.jl/pull/1849
 include("interface.jl")
 
 function Network(

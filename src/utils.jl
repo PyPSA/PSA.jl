@@ -249,7 +249,7 @@ end
 
 """Returns the susceptance matrix of a network"""
 function susceptance_matrix(network)
-    return diagm(network.lines[:x].^(-1))
+    return diagm(0 => network.lines[:x].^(-1))
 end
 
 
@@ -274,48 +274,48 @@ end
 
 
 # following lift-and-project relaxation of Taylor2015a
-function get_shortest_line_paths(network)
-    busidx = idx(network.buses)
+# function get_shortest_line_paths(network)
+#     busidx = idx(network.buses)
 
-    # create elist only for lines with s_nom > 0
-    elist = Tuple{Int64,Int64}[]
-    for l in eachrow(network.lines)
-        if l[:s_nom] > 0
-            push!(elist, (busidx[l[:bus0]], busidx[l[:bus1]]))
-        end
-    end
+#     # create elist only for lines with s_nom > 0
+#     elist = Tuple{Int64,Int64}[]
+#     for l in eachrow(network.lines)
+#         if l[:s_nom] > 0
+#             push!(elist, (busidx[l[:bus0]], busidx[l[:bus1]]))
+#         end
+#     end
 
-    # create graph
-    g = SimpleGraph(length(busidx))
-    for e in elist add_edge!(g,e) end
+#     # create graph
+#     g = SimpleGraph(length(busidx))
+#     for e in elist add_edge!(g,e) end
 
-    # set weights
-    weights = zeros(nrow(network.lines), nrow(network.lines))
-    for l in eachrow(network.lines)
-        weights[busidx[l[:bus0]],busidx[l[:bus1]]] = l[:s_nom_step] * l[:x_step]
-        weights[busidx[l[:bus1]],busidx[l[:bus0]]] = l[:s_nom_step] * l[:x_step]
-    end
+#     # set weights
+#     weights = zeros(nrow(network.lines), nrow(network.lines))
+#     for l in eachrow(network.lines)
+#         weights[busidx[l[:bus0]],busidx[l[:bus1]]] = l[:s_nom_step] * l[:x_step]
+#         weights[busidx[l[:bus1]],busidx[l[:bus0]]] = l[:s_nom_step] * l[:x_step]
+#     end
 
-    line_paths = Array{Int64,1}[]
-    for l in eachrow(network.lines)
+#     line_paths = Array{Int64,1}[]
+#     for l in eachrow(network.lines)
 
-        path_lg = a_star(g, busidx[l[:bus0]], busidx[l[:bus1]], weights)
-        path = [(p.src,p.dst) for p in path_lg]
+#         path_lg = a_star(g, busidx[l[:bus0]], busidx[l[:bus1]], weights)
+#         path = [(p.src,p.dst) for p in path_lg]
     
-        lines_on_path = Int64[]
-        for p in path
-            for i=1:length(elist)
-                if length(union(p, elist[i])) == length(p)
-                    push!(lines_on_path, i)
-                end
-            end
-        end
+#         lines_on_path = Int64[]
+#         for p in path
+#             for i=1:length(elist)
+#                 if length(union(p, elist[i])) == length(p)
+#                     push!(lines_on_path, i)
+#                 end
+#             end
+#         end
 
-        push!(line_paths, lines_on_path)
-    end
+#         push!(line_paths, lines_on_path)
+#     end
 
-    return line_paths
-end
+#     return line_paths
+# end
 
 
 function row_sum(df_row)
@@ -326,22 +326,33 @@ function row_sum(df_row)
     end
 end
 
+# TODO: find a way to get linear constraints exactly in order in JuMP/MOI model as in Gurobi model to substitute m.linconstr from JuMP 0.18.5
 
-# TODO: generalise for multiple solvers; currently only works for Gurobi
-"""Returns the irreducible infeasible set of constraints of an infeasible model"""
-function get_iis(m::JuMP.Model)
-    grb_model = MathProgBase.getrawsolver(internalmodel(m))
-    num_constrs = Gurobi.num_constrs(grb_model)
-    Gurobi.computeIIS(grb_model)
-    iis_constrs = Gurobi.get_intattrarray(grb_model, "IISConstr",  1, num_constrs)
-    m.linconstr[find(iis_constrs)]
+# overwrite Gurobi.jl to match empty array constructor in julia>v1.0
+# TODO: it's a bug, submit as PR to Gurobi.jl 
+function get_intattrarray(model::Gurobi.Model, name::String, start::Integer, len::Integer)
+    @assert isascii(name)
+    Gurobi.get_intattrarray!(Array{Cint}(undef,len), model, name, start)
 end
 
+
+# wait for https://github.com/JuliaOpt/JuMP.jl/issues/1035
+"""Returns the irreducible infeasible set of constraints of an infeasible model"""
+function get_iis(m::JuMP.Model)
+    grb_model = m.moi_backend.optimizer.model.inner
+    num_constrs = Gurobi.num_constrs(grb_model)
+    Gurobi.computeIIS(grb_model)
+    iis_constrs = get_intattrarray(grb_model, "IISConstr",  1, num_constrs)
+    # temporary
+    return iis_constrs
+    #m.linconstr[find(iis_constrs)]
+end
 
 # TODO: generalise for multiple solvers; currently only works for Gurobi
 """Returns the slack of each constraint of an optimised model"""
 function get_slack(m::JuMP.Model)
-    Gurobi.get_dblattrarray( m.internalModel.inner, "Slack", 1, Gurobi.num_constrs(m.internalModel.inner))
+    grb_model = m.moi_backend.optimizer.model.inner
+    Gurobi.get_dblattrarray(grb_model , "Slack", 1, Gurobi.num_constrs(grb_model))
 end
 
 
@@ -358,17 +369,17 @@ function get_active_constraints(m::JuMP.Model)
 end
 
 
-"""Prints the set of active constraints with slack (should be zero) to the console"""
-function print_active_constraints!(m::JuMP.Model)
+# """Prints the set of active constraints with slack (should be zero) to the console"""
+# function print_active_constraints!(m::JuMP.Model)
 
-    slack = get_slack(m)
-    active_constraints = get_active_constraints(m)
+#     slack = get_slack(m)
+#     active_constraints = get_active_constraints(m)
 
-    for ac in active_constraints
-        println(round(slack[ac],5),"\t\t",m.linconstr[ac])
-    end
+#     for ac in active_constraints
+#         println(round(slack[ac],5),"\t\t",m.linconstr[ac])
+#     end
 
-end
+# end
 
 
 """"Returns the set of inactive constraints (non-zero slack) of an optimised model"""
@@ -384,17 +395,17 @@ function get_inactive_constraints(m::JuMP.Model; slack_filter=1e-9)
 end
 
 
-"""Prints the set of inactive constraints with slack (should be non-zero) to the console"""
-function print_inactive_constraints!(m::JuMP.Model; slack_filter=1e-9)
+# """Prints the set of inactive constraints with slack (should be non-zero) to the console"""
+# function print_inactive_constraints!(m::JuMP.Model; slack_filter=1e-9)
 
-    slack = get_slack(m)
-    inactive_constraints = get_inactive_constraints(m, slack_filter=slack_filter)
+#     slack = get_slack(m)
+#     inactive_constraints = get_inactive_constraints(m, slack_filter=slack_filter)
 
-    for iac in inactive_constraints
-        println(round(slack[iac],5),"\t\t",m.linconstr[iac])
-    end
+#     for iac in inactive_constraints
+#         println(round(slack[iac],5),"\t\t",m.linconstr[iac])
+#     end
 
-end
+# end
 
 
 # simple approach; preferred approach is preprocessing the snapshots e.g. with the tsam package
@@ -439,12 +450,13 @@ function line_extensions_candidates(network)
 end
 
 
+# TODO: generalise for multiple solvers; currently only works for Gurobi
 """Returns the constraint matrix of a model.
 If nz=true: entries have value 0 or 1
 If nz=false: entries have value of corresponding parameter
 """
 function constraintmatrix(model::JuMP.Model; nz::Bool=false)
-    constraintmatrix = MathProgBase.getconstrmatrix(internalmodel(model))
+    constraintmatrix = Gurobi.get_constrmatrix(model.moi_backend.optimizer.model.inner)
     cm = deepcopy(constraintmatrix)
     if nz
         nzcm = findnz(cm)
@@ -455,18 +467,18 @@ function constraintmatrix(model::JuMP.Model; nz::Bool=false)
     return cm
 end
 
-"""Plots the constraint matrix"""
-function plot_cm_nonzeroentries(model::JuMP.Model; cm=nothing)
-    if cm == nothing
-        cm = constraintmatrix(model, nz=true)
-        colSwitch = colswitch_cm(model)
-        println(colSwitch)
-        cm = full(cm)[:,colSwitch]
-    end
-    xs = [string("x",i) for i = 1:size(cm)[1]]
-    ys = [string("y",i) for i = 1:size(cm)[2]]
-    heatmap(xs,ys,cm',aspect_ratio=1, color=:Greys, size=(1300,800), title="Non-zero entries of constraint matrix")
-end
+# """Plots the constraint matrix"""
+# function plot_cm_nonzeroentries(model::JuMP.Model; cm=nothing)
+#     if cm == nothing
+#         cm = constraintmatrix(model, nz=true)
+#         colSwitch = colswitch_cm(model)
+#         println(colSwitch)
+#         cm = full(cm)[:,colSwitch]
+#     end
+#     xs = [string("x",i) for i = 1:size(cm)[1]]
+#     ys = [string("y",i) for i = 1:size(cm)[2]]
+#     heatmap(xs,ys,cm',aspect_ratio=1, color=:Greys, size=(1300,800), title="Non-zero entries of constraint matrix")
+# end
 
 
 """Plots the value distribution of the constraint matrix"""
@@ -483,20 +495,19 @@ function plot_cm_valuedistribution(model::JuMP.Model; cutoff=1e6, cm=nothing)
         xlabel="value / coefficient", ylabel="frequency", size=(1400,800), legend=false, color=:grays)
 end
 
-
-"""Switches columns of constraint matrix for organised plotting"""
-function colswitch_cm(model::JuMP.Model)
-    model.objDict # produces model.colNames
-    variables = model.colNames
-    println(model.colNames)
-    switches = []
-    T = size(model[:LN_ext])[2]
-    push!(switches,find(x->x==true, .![occursin(",", i) for i in variables]))
-    for t=1:T
-        push!(switches,find(x->x==true, [occursin(",$t]", i) for i in variables]))
-    end
-    return reverse(vcat(switches...))
-end
+# """Switches columns of constraint matrix for organised plotting"""
+# function colswitch_cm(model::JuMP.Model)
+#     model.obj_dict # produces model.colNames
+#     variables = model.colNames
+#     println(model.colNames)
+#     switches = []
+#     T = size(model[:LN_ext])[2]
+#     push!(switches,find(x->x==true, .![occursin(",", i) for i in variables]))
+#     for t=1:T
+#         push!(switches,find(x->x==true, [occursin(",$t]", i) for i in variables]))
+#     end
+#     return reverse(vcat(switches...))
+# end
 
 
 """Calculates the Big-M parameters for each line using the assumed maximum angle difference."""
@@ -529,8 +540,8 @@ end
 
 """Retrieves all variable symbols (names) of a model"""
 function getvariables(m::JuMP.Model)
-    return [k for (k,v) in m.objDict 
-             if issubtype(eltype(v), JuMP.Variable) &&
+    return [k for (k,v) in m.obj_dict 
+             if eltype(v) <: JuMP.VariableRef &&
              k!= :ALPHA &&
              size(m[k])[1]!=0
            ]
@@ -539,7 +550,7 @@ end
 
 """Retrieves all constraint symbols (names) of a model"""
 function getconstraints(m::JuMP.Model)
-    objs = [k for (k,v) in m.objDict if issubtype(eltype(v), JuMP.ConstraintRef)]
+    objs = [k for (k,v) in m.obj_dict if eltype(v) <: JuMP.ConstraintRef]
     constraints = []
     for obj in objs
         empty = false
@@ -555,14 +566,9 @@ function getconstraints(m::JuMP.Model)
     return constraints
 end
 
+JuMP.standard_form_rhs(constraint::Array) = reshape([JuMP.rhs(constraint[1])],1,1) # special case for global constraints
 
-JuMP.rhs(constraint::JuMP.ConstraintRef) = JuMP.rhs(LinearConstraint(constraint))
-
-
-JuMP.rhs(constraint::Array) = reshape([JuMP.rhs(constraint[1])],1,1) # special case for global constraints
-
-
-JuMP.rhs(constraints::JuMP.JuMPArray{JuMP.ConstraintRef}) = JuMP.JuMPArray(JuMP.rhs.(constraints.innerArray), constraints.indexsets)
+JuMP.standard_form_rhs(constraints::JuMP.Containers.DenseAxisArray{JuMP.ConstraintRef}) = JuMP.Containers.DenseAxisArray(JuMP.standarf_form_rhs.(constraints.innerArray), constraints.indexsets)
 
 
 """Computes the constant term of a Benders cut using the uncoupled constraints of the subproblems."""
@@ -570,9 +576,9 @@ function get_benderscut_constant(m::JuMP.Model, uncoupled_constraints::Array{Any
     constant = 0
     for constr in uncoupled_constraints
         try
-            constant += dot(getdual(m[constr])[:,:],JuMP.rhs(m[constr])[:,:])
+            constant += dot(JuMP.shadow_price.(m[constr].data)[:,:],JuMP.standard_form_rhs.(m[constr])[:,:])
         catch
-            constant += dot(getdual(m[constr])[:],JuMP.rhs(m[constr])[:])
+            constant += dot(JuMP.shadow_price.(m[constr])[:],JuMP.standard_form_rhs.(m[constr])[:])
         end
     end
     return constant
@@ -588,25 +594,45 @@ function get_benderscut_constant(m::Array{JuMP.Model,1}, uncoupled_constraints::
 end
 
 
-function getduals(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
-    z = vcat(getfield.(getdual.(getindex.(m,cnstr)), :innerArray)...)
+function duals(models::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
+    z = []
+    for m in models
+        cnstr_array = getindex(m,cnstr)
+        model_duals = JuMP.shadow_price.(cnstr_array.data)
+        push!(z, model_duals)
+    end
+    z = vcat(z...)
     filter_b ? z[(z.<1e-5).&(z.>-1e-5)] = 0.0 : nothing
     return z
 end
 
 
-function getduals_flows(m::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
-    x=getdual(getindex.(m, cnstr))
-    if filter_b
-        for t=1:length(x)
-             for (l,c,ts) in keys(x[t])
-                z = x[t][l,c,ts]
-                if z>-1e-5 && z<1e-5
-                    x[t][l,c,ts] = 0.0
-                end
-             end
+function duals_flows(models::Array{JuMP.Model,1}, cnstr::Symbol; filter_b::Bool=false)
+
+    x = []
+    for m in models
+        cnstr_array = getindex(m, cnstr)
+        
+        dim_l = 0
+        dim_c = 0
+        dim_ts = 0
+        for (l,c,ts) in keys(cnstr_array.data)
+            dim_l < l ? dim_l = l : nothing
+            dim_c < c ? dim_c = c : nothing
+            dim_ts < ts ? dim_ts = ts : nothing
         end
+        
+        y = Array{Float64,3}(undef, dim_l, dim_c+1, dim_ts)
+        
+        for (l,c,ts) in keys(cnstr_array.data)
+            y[l,c+1,ts] = JuMP.shadow_price(cnstr_array.data[l,c,ts])
+        end
+
+        push!(x,y)
     end
+
+    filter_b ? x[(x.<1e-5).&(x.>-1e-5)] = 0.0 : nothing
+
     return x
 end
 
@@ -690,13 +716,13 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     ST_soc = [hcat(getindex.(sm, :ST_soc_fix)...); hcat(getindex.(sm, :ST_soc_ext)...)]
     ST_spill = [hcat(getindex.(sm, :ST_spill_fix)...); hcat(getindex.(sm, :ST_spill_ext)...)]
 
-    capex_gep_cost = dot(generators[ext_gens_b,:capital_cost], getvalue(m[:G_p_nom])) + 
+    capex_gep_cost = dot(generators[ext_gens_b,:capital_cost], JuMP.value.(m[:G_p_nom])) + 
     dot(generators[fix_gens_b,:capital_cost], generators[fix_gens_b,:p_nom])
 
-    capex_tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom])) +
+    capex_tep_cost = dot(lines[ext_lines_b,:capital_cost], JuMP.value.(m[:LN_s_nom])) +
     dot(lines[fix_lines_b,:capital_cost], lines[fix_lines_b,:s_nom]) 
 
-    capex_hvdc_cost = dot(links[ext_links_b,:capital_cost], getvalue(m[:LK_p_nom])) +
+    capex_hvdc_cost = dot(links[ext_links_b,:capital_cost], JuMP.value.(m[:LK_p_nom])) +
     dot(links[fix_links_b,:capital_cost], links[fix_links_b,:p_nom]) 
 
     capex_cost = capex_gep_cost + capex_tep_cost + capex_hvdc_cost
@@ -708,33 +734,33 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
     storage_units = [storage_units[fix_sus_b,:]; storage_units[ext_sus_b,:]]
     stores = [stores[fix_stores_b,:]; stores[ext_stores_b,:]]
 
-    opex_cost = sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], getvalue(G[:,t])) for t=1:T)
+    opex_cost = sum(network.snapshots[:weightings][t]*dot(generators[:marginal_cost], JuMP.value.(G[:,t])) for t=1:T)
 
     # tep costs
-    tep_cost = dot(lines[ext_lines_b,:capital_cost], getvalue(m[:LN_s_nom]))
+    tep_cost = dot(lines[ext_lines_b,:capital_cost], JuMP.value.(m[:LN_s_nom]))
 
     # write results
     generators[:p_nom_opt] = deepcopy(generators[:p_nom])
     fix_gens_b_reordered = (.!generators[:p_nom_extendable])
     ext_gens_b_reordered = .!fix_gens_b_reordered
-    generators[ext_gens_b_reordered,:p_nom_opt] = getvalue(m[:G_p_nom])
+    generators[ext_gens_b_reordered,:p_nom_opt] = JuMP.value.(m[:G_p_nom])
     network.generators = generators
-    network.generators_t["p"] = names!(DataFrame(transpose(getvalue(G))), Symbol.(generators[:name]))
+    network.generators_t["p"] = names!(DataFrame(transpose(JuMP.value.(G))), Symbol.(generators[:name]))
     network.generators = select_names(network.generators, orig_gen_order)
 
     orig_line_order = network.lines[:name]
     network.lines = lines
     lines[:s_nom_opt] = deepcopy(lines[:s_nom])
-    network.lines[ext_lines_b,:s_nom_opt] = getvalue(m[:LN_s_nom])
-    network.lines_t["p0"] = names!(DataFrame(transpose(getvalue(LN))), Symbol.(lines[:name]))
+    network.lines[ext_lines_b,:s_nom_opt] = JuMP.value.(m[:LN_s_nom])
+    network.lines_t["p0"] = names!(DataFrame(transpose(JuMP.value.(LN))), Symbol.(lines[:name]))
     network.lines = select_names(network.lines, orig_line_order)
 
     if nrow(links)>0
         orig_link_order = network.links[:name]
         network.links = links
         links[:p_nom_opt] = deepcopy(links[:p_nom])
-        network.links[ext_links_b,:p_nom_opt] = getvalue(m[:LK_p_nom])
-        network.links_t["p0"] = names!(DataFrame(transpose(getvalue(LK))), Symbol.(links[:name]))
+        network.links[ext_links_b,:p_nom_opt] = JuMP.value.(m[:LK_p_nom])
+        network.links_t["p0"] = names!(DataFrame(transpose(JuMP.value.(LK))), Symbol.(links[:name]))
         network.links = select_names(network.links, orig_link_order)
 
     end
@@ -743,26 +769,26 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
         network.storage_units = storage_units
 
         storage_units[:p_nom_opt] = deepcopy(storage_units[:p_nom])
-        network.storage_units[ext_sus_b,:p_nom_opt] = getvalue(m[:SU_p_nom])
-        network.storage_units_t["spill"] = names!(DataFrame(transpose(getvalue(SU_spill))),
+        network.storage_units[ext_sus_b,:p_nom_opt] = JuMP.value.(m[:SU_p_nom])
+        network.storage_units_t["spill"] = names!(DataFrame(transpose(JuMP.value.(SU_spill))),
                             Symbol.(storage_units[:name]))
-        network.storage_units_t["p"] = names!(DataFrame(transpose(getvalue(SU_dispatch .- SU_store))),
+        network.storage_units_t["p"] = names!(DataFrame(transpose(JuMP.value.(SU_dispatch .- SU_store))),
                             Symbol.(storage_units[:name]))
-        network.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(getvalue(SU_soc))),
+        network.storage_units_t["state_of_charge"] = names!(DataFrame(transpose(JuMP.value.(SU_soc))),
                             Symbol.(storage_units[:name]))
         network.storage_units = select_names(network.storage_units, orig_sus_order)
     end
 
     align_component_order!(network)
 
-    total_gen = sum(sum(network.snapshots[:weightings][t]*getvalue(G[:,t]) for t=1:T))
+    total_gen = sum(sum(network.snapshots[:weightings][t]*JuMP.value.(G[:,t]) for t=1:T))
 
     # print total system code
-    println("\nObjective:\t$(m.objVal/1e9) Billion Euro")
+    println("\nObjective:\t$(JuMP.objective_value(m)/1e9) Billion Euro")
     println("CAPEX cost:\t$(capex_cost/1e9) Billion Euro")
     println("OPEX cost:\t$(opex_cost/1e9) Billion Euro")
-    println("LCOE avg:\t$(m.objVal/total_gen) Euro / MWh")
-    println("TEP share:\t$(tep_cost/m.objVal*100) %")
+    println("LCOE avg:\t$(JuMP.objective_value(m)/total_gen) Euro / MWh")
+    println("TEP share:\t$(tep_cost/JuMP.objective_value(m)*100) %")
 
     generators = [generators[fix_gens_b_reordered,:]; generators[ext_gens_b_reordered,:] ]
     nonnull_carriers = network.carriers[network.carriers[:co2_emissions].!=0, :][:name]
@@ -770,7 +796,7 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
 
     # carbon emissions
     co2, = sum(sum(network.snapshots[:weightings][t]*dot(1 ./ generators[carrier_index(nonnull_carriers) , :efficiency],
-                                getvalue(G[carrier_index(nonnull_carriers),t])) for t=1:T)
+                                JuMP.value.(G[carrier_index(nonnull_carriers),t])) for t=1:T)
                                 * select_names(network.carriers, [carrier])[:co2_emissions]
                                 for carrier in network.carriers[:name])
 
@@ -778,7 +804,7 @@ function write_optimalsolution(network, m::JuMP.Model; sm=nothing, joint::Bool=t
 
     # renewable energy target
     null_carriers = network.carriers[network.carriers[:co2_emissions].==0,:][:name]
-    res = sum(sum(network.snapshots[:weightings][t]*getvalue(G[carrier_index(null_carriers),t]) for t=1:T)) / total_gen
+    res = sum(sum(network.snapshots[:weightings][t]*JuMP.value.(G[carrier_index(null_carriers),t]) for t=1:T)) / total_gen
 
     println("RES share:\t$(res*100) %")
 

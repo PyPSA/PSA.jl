@@ -1,4 +1,5 @@
 # imports
+using JuMP
 using PowerModels
 pm = PowerModels
 
@@ -42,7 +43,7 @@ function val(element, attr::String, translator::Dict, busidx::Dict)
         "vmax" => 1.1
     )
 
-    if in(translator[attr], keys(element.df.colindex))
+    if in(translator[attr], keys(getfield(getfield(element,:df),:colindex)))
         if occursin("bus",attr)
             return busidx[element[translator[attr]]]
         else
@@ -250,7 +251,7 @@ end
 function get_LN(network::PSA.network_mutable, powermodel::GenericPowerModel, variable::Symbol; reverse::Bool=false, ext::Bool=true)
 
     if typeof(powermodel) <: Union{DCPPowerModel, NFAPowerModel} && ( variable != :p || reverse )
-        return Array{JuMP.Variable,2}
+        return Array{JuMP.VariableRef,2}
     end
 
     ln = network.lines
@@ -260,7 +261,7 @@ function get_LN(network::PSA.network_mutable, powermodel::GenericPowerModel, var
     rev_lnidx = PSA.rev_idx(ln)
     ext_ln_b = ln[:s_nom_extendable]
     ext ? L_var = sum(ext_ln_b) : L_var = sum(.!ext_ln_b)
-    vars = Array{Any,2}(L_var,T)
+    vars = Array{Any,2}(undef,L_var,T)
     reverse ? dir = (:bus1, :bus0) : dir = (:bus0, :bus1)
     l_var = 1
     for l=1:L
@@ -276,11 +277,11 @@ function get_LN(network::PSA.network_mutable, powermodel::GenericPowerModel, var
         end
         l_var += 1
     end
-    return convert(Array{JuMP.Variable,2}, vars)
+    return convert(Array{JuMP.VariableRef,2}, vars)
 end
 
 ""
-function constraint_thermal_limit_from_ext(gpm::GenericPowerModel, i::Int, var::Union{JuMP.GenericAffExpr, JuMP.Variable}; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
+function constraint_thermal_limit_from_ext(gpm::GenericPowerModel, i::Int, var::Union{JuMP.GenericAffExpr, JuMP.VariableRef}; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
     if !haskey(con(gpm, nw, cnd), :sm_fr)
         con(gpm, nw, cnd)[:sm_fr] = Dict{Int,Any}() # note this can be a constraint or a variable bound
     end
@@ -295,7 +296,7 @@ end
 
 
 ""
-function constraint_thermal_limit_to_ext(gpm::GenericPowerModel, i::Int, var::Union{JuMP.GenericAffExpr, JuMP.Variable}; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
+function constraint_thermal_limit_to_ext(gpm::GenericPowerModel, i::Int, var::Union{JuMP.GenericAffExpr, JuMP.VariableRef}; nw::Int=gpm.cnw, cnd::Int=gpm.ccnd)
     if !haskey(con(gpm, nw, cnd), :sm_to)
         con(gpm, nw, cnd)[:sm_to] = Dict{Int,Any}() # note this can be a constraint or a variable bound
     end

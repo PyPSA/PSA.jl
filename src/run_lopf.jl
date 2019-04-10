@@ -30,16 +30,17 @@ function run_lopf(network, solver;
             )
     end
 
-    status = solve(m)
+    JuMP.optimize!(m)
+    status = JuMP.termination_status(m)
 
-    if status==:Optimal
+    if status==MOI.OPTIMAL
         write_optimalsolution(network, m)
     end
 
     # print iis if infeasible
-    if status == :Infeasible && typeof(solver) == Gurobi.GurobiSolver
-        println("WARNING: Subproblem $i is infeasible. The IIS is:")
-        println(get_iis(models_slave[i]))
+    if status == MOI.INFEASIBLE && solver.constructor == Gurobi.Optimizer
+        println("WARNING: Problem is infeasible. The IIS is:")
+        println(get_iis(m))
     end
 
     return m

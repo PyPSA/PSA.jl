@@ -46,7 +46,7 @@ function run_iterative_lopf(network, solver, iterations;
     k=1
     diff = 1e11
     # solve
-    while k<iterations && diff > 1
+    while k<=iterations && diff > 1
 
         println("Run iteration $k")
 
@@ -67,9 +67,9 @@ function run_iterative_lopf(network, solver, iterations;
                 )
         end
 
-        k!=1 ? diff = abs(objectives[end]-m.objVal) : diff = 1e11
+        k!=1 ? diff = abs(objectives[end]-JuMP.objective_value(m)) : diff = 1e11
 
-        push!(objectives, m.objVal)
+        push!(objectives, JuMP.objective_value(m))
         push!(capacities, network.lines[:s_nom_opt])
         push!(reactances, network.lines[:x])
 
@@ -123,7 +123,7 @@ function run_iterative_lopf(network, solver, iterations;
                 m_threshold = run_lopf(network, solver; rescaling=rescaling)
 
                 # compare to best solution in loop; better gets model
-                if (threshold == discretization_thresholds[1]) || (m_threshold.objVal < m_opt.objVal)
+                if (threshold == discretization_thresholds[1]) || (JuMP.objective_value(m_threshold) < JuMP.objective_value(m_opt))
                     println("\nCURRENT THRESHOLD BETTER OR FIRST ITERATION -- UPDATING threshold_opt to $threshold\n")
                     m_opt = m_threshold
                     threshold_opt = threshold

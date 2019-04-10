@@ -101,9 +101,11 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
     T_params_length = length(T_params)
     
     if blockmodel
-        m = BlockModel(solver=solver)
+        m = BlockModel(solver)
     else
-        m = Model(solver=solver)
+        # TODO: understand meaning of direct model better
+        m = JuMP.direct_model(solver)
+        #m = Model(solver)
     end
 
 # --------------------------------------------------------------------------------------------------------
@@ -113,10 +115,10 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
     if typeof(formulation) != String
  
         # TODO: unsure, but might be necessary for DC approximation, why does it make such a big difference?
-        # if formulation <: GenericPowerModel{T} where T <: pm.AbstractActivePowerFormulation
-        #    lines[:r] .= 0.0
-        #    lines[:r_pu] .= 0.0
-        # end
+        if formulation <: GenericPowerModel{T} where T <: pm.AbstractActivePowerFormulation
+           lines[:r] .= 0.0
+           lines[:r_pu] .= 0.0
+        end
         
         if formulation <: GenericPowerModel{T} where T <: pm.AbstractBFForm
             post = post_mn_flow_bf
@@ -1010,7 +1012,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
                     # TODO: add option in function parameters
                     convex_relaxation = true
 
-                    ub_ext = Array{Any}(N_ext_LN)
+                    ub_ext = Array{Any}(undef, N_ext_LN)
 
                     if convex_relaxation
                         for l=1:N_ext_LN
@@ -1237,7 +1239,7 @@ function build_lopf(network, solver; rescaling::Bool=false,formulation="angles_l
 
                             sum(G[findall(in([reverse_busidx[n]]), generators[:bus]), t])
                             + sum(links[findall(in([reverse_busidx[n]]), links[:bus1]),:efficiency]
-                                .* LK[ findall([reverse_busidx[n]]), in(links[:bus1]) ,t])
+                                .* LK[ findall(in([reverse_busidx[n]]), links[:bus1]) ,t])
                             + sum(SU_dispatch[ findall(in([reverse_busidx[n]]), storage_units[:bus]) ,t])
 
                             - row_sum(loads[t,findall(in([reverse_busidx[n]]), network.loads[:bus])])

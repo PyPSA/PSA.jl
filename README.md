@@ -47,7 +47,7 @@ solver = with_optimizer(Clp.Optimizer)
 
 m = PSA.run_lopf(network, solver)
 
-print(m.objVal)
+print(JuMP.objective_value(m))
 ```
 
 
